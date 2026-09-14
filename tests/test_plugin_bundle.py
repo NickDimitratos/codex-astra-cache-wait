@@ -1,6 +1,8 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +35,28 @@ class PluginBundleTests(unittest.TestCase):
         spec = json.loads((resources / "compatibility.json").read_text())
         self.assertEqual(hashlib.sha256((resources / spec["patch"]).read_bytes()).hexdigest(),
                          spec["patch_sha256"])
+
+    def test_checkout_preserves_patch_hash_with_crlf_enabled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "source"
+            checkout = Path(temporary) / "checkout"
+            root.mkdir()
+            def git(*args):
+                return subprocess.run(["git", "-C", str(root), *args],
+                                      capture_output=True, text=True, check=True)
+            git("init", "-q")
+            (root / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
+            paths = ["patches/astra-cache-and-idle-wait.patch",
+                     "plugins/astra-runtime-manager/resources/patches/astra-cache-and-idle-wait.patch"]
+            for name in paths:
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / name).read_bytes())
+            git("add", ".")
+            git("-c", "core.autocrlf=true", "-c", "core.eol=crlf", "checkout-index",
+                "--all", "--prefix=" + checkout.as_posix() + "/")
+            for name in paths:
+                self.assertEqual((checkout / name).read_bytes(), (ROOT / name).read_bytes())
 
     def test_marketplace_resolves_self_contained_plugin(self):
         catalog = json.loads((ROOT / ".agents/plugins/marketplace.json").read_text())

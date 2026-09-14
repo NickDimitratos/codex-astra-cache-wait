@@ -38,12 +38,13 @@ The manager's source-build command uses the same pinned upstream assembly path u
 
 ## Community toolkit update (0.2.0)
 
-- 56 Python checks passed locally: existing guard/manager tests plus version discovery, exact catalog matching, native cumulative counter handling, OpenCodex deduplication, missing usage, report privacy, and numeric comparisons.
+- 57 Python checks cover the original guard/manager behaviors plus version discovery, exact catalog matching, native cumulative counter handling, OpenCodex deduplication, missing usage, report privacy, numeric comparisons, and byte preservation with Git CRLF conversion enabled.
 - Actual CLI capability checks succeeded for installed 0.153.4 and 0.154.0-alpha.6.2. Native usage emission was inspected in the official source of both releases; both return cumulative thread totals.
 - The official plugin and skill validators passed.
 - A temporary setup imported the previously validated runtime, passed both local package checks, enabled only its launcher, and remained inactive. Repeated setup preserved the receipt without rebuilding. The launcher refused an open desktop, disable restored the bundled CLI, and removal deleted only the temporary managed directory.
 - Synthetic before/after examples reproduce their documented counts without model calls. They are not savings evidence.
 - CI now runs the Python checks on Linux, macOS, and Windows with Python 3.9 and 3.13, with a separate exact-source patch check. This checks the toolkit; it does not certify the Rust runtime on those operating systems.
+- The first Windows run exposed automatic line-ending conversion changing checksummed patch bytes. Git attributes now preserve those files byte-for-byte; a simulated CRLF checkout is covered by a regression check.
 
 ## Unproven outcomes
 
