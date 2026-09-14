@@ -4,6 +4,8 @@ Astra Runtime Manager is a community plugin for checking Codex compatibility, re
 
 **Installing the plugin alone does not activate the patch or reduce token usage.** Trying the runtime changes requires a supported installation, separate setup, and a restart through the generated launcher.
 
+**Version 0.3:** for standalone CLIs, Intel/AMD processors, Linux, Windows, and experimental builds, use [the CLI/CPU guide](PORTABILITY.md). The desktop walkthrough below describes the previously validated Apple Silicon app path.
+
 ## 1. Choose what you need
 
 | Your goal | Requirements | Expected result |
@@ -11,7 +13,7 @@ Astra Runtime Manager is a community plugin for checking Codex compatibility, re
 | Check CLI compatibility | Python 3.9+ and an installed Codex CLI | A local report; no runtime changes |
 | Understand or compare usage | Python 3.9+ and supported local JSONL logs | Token totals, cache coverage, errors, and observed changes |
 | Try the runtime patch | CLI `0.154.0-alpha.6.2`, matching desktop app, Apple Silicon macOS, and build tools below | A separately built runtime you explicitly launch |
-| Use Windows, Linux, Intel macOS, or another CLI release | Diagnostics/reporting where the format is recognized | Runtime setup remains unavailable until that version/platform is validated |
+| Use Windows, Linux, Intel macOS, or a standalone CLI | See [PORTABILITY.md](PORTABILITY.md) | Diagnostics/reports plus experimental builds for source-checked releases; local validation is mandatory |
 
 OpenCodex is optional; native `codex exec --json` captures also work. A CLI with native plugin support can install the plugin. Older CLIs can use the standalone scripts below. See [release evidence](RELEASES.md) for the tested scope.
 
@@ -183,7 +185,7 @@ Removal refuses to delete a running runtime, proceed with unknown process status
 | --- | --- |
 | `codex plugin` is unknown | Check the desktop's bundled CLI or use standalone tools in step 2 |
 | Codex cannot find the skill | Confirm installation/enabling and start a new task/session |
-| `runtime_patch_available: false` | No approved runtime entry for this CLI/platform; diagnostics/reports remain available |
+| `runtime_patch_available: false` | Check `experimental_build_available` and upstream evidence; diagnostics/reports remain available |
 | Unknown capabilities or `probe_note` | Check executable permissions and help/version commands; select it with `doctor --cli "/absolute/path/to/codex"` |
 | No unique desktop app found | Pass your actual app path with `setup --app "/absolute/path/to/App.app"` |
 | Missing build tools or a build error | Read the reported error/build log, resolve the prerequisite, and retry; incomplete setup is not active |

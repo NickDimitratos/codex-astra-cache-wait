@@ -7,10 +7,15 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import queue
+import threading
+import time
 
 
 
 def main(package, output_dir):
+    metadata = json.loads((package / "codex-package.json").read_text())
+    assert metadata.get("entrypoint") in ("bin/codex", "bin/codex.exe"), "Unsupported package entrypoint"
     with tempfile.TemporaryDirectory(prefix="astra-app-server-smoke-") as temporary:
         home = Path(temporary)
         (home / "config.toml").write_text(
@@ -20,23 +25,35 @@ def main(package, output_dir):
         environment["CODEX_HOME"] = str(home)
         with (output_dir / "app-server-smoke.stderr.log").open("w") as stderr:
             process = subprocess.Popen(
-                [str(package / "bin/codex"), "--enable", "reasoning_effort_override",
+                [str(package / metadata["entrypoint"]), "--enable", "reasoning_effort_override",
                  "--enable", "event_driven_wait", "app-server"],
                 cwd=home, env=environment, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=stderr, text=True,
             )
+            replies = queue.Queue()
+
+            def read_replies():
+                for line in process.stdout:
+                    replies.put(line)
+                replies.put(None)
+
+            reader = threading.Thread(target=read_replies, daemon=True)
+            reader.start()
 
             def send(message):
                 process.stdin.write(json.dumps(message) + "\n")
                 process.stdin.flush()
 
             def receive(identifier):
-                for line in process.stdout:
+                deadline = time.monotonic() + 30
+                while True:
+                    line = replies.get(timeout=max(0, deadline - time.monotonic()))
+                    if line is None:
+                        raise AssertionError("App server closed before replying")
                     message = json.loads(line)
                     if message.get("id") == identifier:
                         assert "error" not in message, message
                         return message["result"]
-                raise AssertionError("App server closed before replying")
 
             try:
                 send({"id": 1, "method": "initialize", "params": {
@@ -73,8 +90,18 @@ def main(package, output_dir):
                 print(json.dumps(result))
             finally:
                 process.stdin.close()
+                try:
+                    code = process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+                    try:
+                        code = process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        code = process.wait(timeout=5)
+                reader.join(timeout=2)
                 process.stdout.close()
-                assert process.wait() == 0, "App server exited unsuccessfully"
+                assert code == 0, "App server exited unsuccessfully"
 
 
 if __name__ == "__main__":

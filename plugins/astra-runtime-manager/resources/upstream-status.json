@@ -1,0 +1,17 @@
+{
+  "codex-cli 0.153.4": {
+    "status": "requires_separate_port",
+    "commit": "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
+    "reason": "Effort override source modules required by this patch are absent."
+  },
+  "codex-cli 0.154.0": {
+    "status": "source_patch_checked",
+    "commit": "6b9826e3aa83b1a5947db50f4332cb9c65f1b340",
+    "reason": "Existing patch applies to the exact stable source; local runtime validation is required."
+  },
+  "codex-cli 0.155.0-alpha.4": {
+    "status": "upstream_effort_pinning_present",
+    "commit": "66eab8ece44141ff92707868269e1d53b40c4ac5",
+    "reason": "Upstream has reasoning_effort_for_request and compaction-aware pinning. The feature remains under development and disabled by default. Do not apply the older cache patch; event-driven wait is not established by this finding."
+  }
+}

@@ -1,6 +1,6 @@
 # Compatibility limits and release work
 
-This is a source experiment for one release, not a general-purpose installer. An exact version match and passing local mock tests do not establish backend compatibility for every configuration.
+This is a source experiment with exact release manifests and experimental native build adapters. See [PORTABILITY.md](PORTABILITY.md) for release and platform scope. Exact version matches and local mock tests do not establish backend compatibility for every configuration.
 
 ## OpenAI API restrictions
 

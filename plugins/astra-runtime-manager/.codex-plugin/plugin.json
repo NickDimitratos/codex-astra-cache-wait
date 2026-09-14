@@ -1,7 +1,7 @@
 {
   "name": "astra-runtime-manager",
-  "version": "0.2.0+codex.20260914200604",
-  "description": "Check Codex CLI compatibility, report token usage, and manage tested experimental Astra runtimes.",
+  "version": "0.3.0",
+  "description": "Check CLI/CPU compatibility, measure usage, and manage desktop or standalone experimental Astra runtimes.",
   "author": {
     "name": "Nick Dimitratos",
     "url": "https://github.com/NickDimitratos"
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Astra Runtime Manager",
     "shortDescription": "Check compatibility, measure usage, and manage tested runtimes.",
-    "longDescription": "Community tools for CLI capability checks and private usage comparisons. Runtime activation requires a tested release and platform; installing the plugin alone does not enable the patch. Savings remain unmeasured.",
+    "longDescription": "Portable diagnostics and usage reports, standalone CLI setup, and guarded experimental builds for cataloged releases on x86-64/ARM64 macOS, Linux, and Windows. Runtime behavior must pass local validation; universal release compatibility and savings are not guaranteed.",
     "developerName": "Nick Dimitratos",
     "category": "Developer Tools",
     "capabilities": [

@@ -2,7 +2,7 @@
 
 Check CLI compatibility, measure token usage, and manage a separate experimental Astra runtime. **OpenCodex is optional.** Diagnostics and reporting do not require a custom runtime, API key, remote service, or model probe.
 
-**Installing the plugin does not activate the runtime patch.** The source patch currently targets Codex CLI `0.154.0-alpha.6.2`; it addresses cache reuse when reasoning effort changes and empty waits that can trigger another model request.
+**Installing the plugin does not activate the runtime patch.** The patch addresses cache reuse when reasoning effort changes and empty waits that can trigger another model request. Version 0.3 adds standalone setup and x86-64/ARM64 target adapters; experimental builds require a cataloged release and local validation. See [CLI/CPU compatibility and commands](docs/PORTABILITY.md).
 
 ## Start here
 
@@ -13,7 +13,7 @@ The normal path is **install plugin → check compatibility → optionally build
 | What you want to know | Short answer |
 | --- | --- |
 | Will installing the plugin immediately save tokens? | No. Runtime activation is a separate step. |
-| Does it work with my CLI? | Capability checks are version-independent; runtime activation currently requires the exact supported release/platform below. |
+| Does it work with my CLI? | Capability checks are version-independent. Runtime builds need a cataloged release and local validation; newer upstream fixes are reported separately. |
 | How much will I save? | No controlled live percentage is established. Little or no benefit is possible. |
 | Do usage reports cost model tokens? | The local scripts make zero model calls. Asking Codex to interpret results uses normal assistant usage. |
 | How do I know it is active? | Check `running: true` after restarting through the generated launcher; also check model/API compatibility. |
@@ -27,8 +27,9 @@ The normal path is **install plugin → check compatibility → optionally build
 | Native CLI usage reports | Recognized `codex exec --json` layout; cumulative thread totals counted once |
 | OpenCodex reports | Optional request-level usage JSONL, with request deduplication |
 | Plugin installation | Releases with native plugin support; older CLIs can use the standalone Python tools |
-| Runtime activation | Exact tested version/platform pairs in the release catalog |
-| Current runtime entry | `0.154.0-alpha.6.2`, Apple Silicon macOS, matching desktop app |
+| Validated runtime path | `0.154.0-alpha.6.2`, Apple Silicon macOS; desktop or standalone CLI |
+| Experimental native builds | `0.154.0-alpha.6.2` and `0.154.0`; x86-64/ARM64 macOS, Linux GNU/musl, Windows MSVC; require experimental opt-in and local validation |
+| Newer upstream implementation | `0.155.0-alpha.4` has request-effort pinning; the older patch is refused |
 | Automatically patch every past/future release | **Not supported**; source changes need release-specific validation |
 
 See [compatibility evidence](docs/RELEASES.md) and [measurement commands](docs/MEASUREMENTS.md). Unknown releases keep their original runtime. The tool does not downgrade a CLI or force an old patch onto it.
@@ -45,7 +46,7 @@ The cache approach follows OpenAI's guidance to keep request-level effort stable
 
 ## Who should try the runtime patch
 
-Developers who can build and test a custom Codex runtime and are using the **exact pinned release**. Start with disposable tasks and compare task quality as well as token usage.
+Developers who can build and test a custom runtime using an **exact cataloged release**. Start with disposable tasks and compare quality as well as usage. The original validation below is distinct from experimental targets in [PORTABILITY.md](docs/PORTABILITY.md).
 
 | Component | Current evidence |
 | --- | --- |
@@ -53,8 +54,9 @@ Developers who can build and test a custom Codex runtime and are using the **exa
 | Commit | `b5bffd3ec4db487e7e3dec59663875b0ef7b72ca` |
 | Built and tested platform | macOS, Apple Silicon (`aarch64-apple-darwin`) |
 | Cache model | `gpt-6-astra`, standard single-agent API mode, subject to runtime gates |
-| Windows, Linux, Intel macOS | Not runtime-validated by this project |
-| Other Codex releases | Not supported by this patch manifest |
+| Windows, Linux, Intel macOS | Native build adapters; experimental local validation required |
+| Stable `0.154.0` | Source patch checked; experimental local validation required |
+| Other Codex releases | Capability reports and explicit source evidence; no wildcard patching |
 | Real workload savings | Not yet measured in a controlled comparison |
 
 Read the [API and compaction limits](docs/COMPATIBILITY.md) before enabling the cache feature. In particular, the legacy remote compaction path is not supported with configuration updates. The included guard checks source compatibility; it does not certify every runtime configuration.
@@ -76,7 +78,7 @@ Start a **new Codex task/session** and ask “Use Astra Runtime Manager to check
 
 To activate a supported runtime, ask “Set up and enable the Astra runtime, validate it, and give me the launcher. Keep my current tasks running.” The `setup` command builds or imports a package, validates it, and enables its launcher. Finish tasks, quit Codex, launch through the returned `launch-patched.command`, then verify **`running: true`**. `installed` and `enabled_for_launcher` do not prove activation.
 
-Runtime setup requires the exact supported app version, Apple Silicon macOS, Python 3.11+, Git, just, Rustup/Rust 1.95.0, Apple's command-line tools, network access, and substantial build disk space. It validates the package, keeps it under `~/.local/share/codex-astra-cache-wait`, and supplies an explicit launcher. Finish active tasks and quit Codex before using that launcher.
+The previously validated desktop path requires the matching app version, Apple Silicon macOS, Python 3.11+, Git, just, Rustup/Rust 1.95.0, Apple command-line tools, network access, and build disk space. For standalone CLIs, Intel/AMD processors, Linux, Windows, and experimental stable builds, follow [PORTABILITY.md](docs/PORTABILITY.md). Setup keeps the runtime under `~/.local/share/codex-astra-cache-wait`; it never replaces the original installation.
 
 To update this GitHub installation, run `codex plugin marketplace upgrade astra-runtime`, then `codex plugin add astra-runtime-manager@astra-runtime`, and start a new task/session. Updating the plugin does not silently replace a separately installed runtime.
 
@@ -102,7 +104,7 @@ Read the [build, validation, activation, and rollback instructions](docs/BUILD.m
 
 The existing verification covered stable prefixes, reasoning changes, trusted history, resume/fork, unsupported configurations, agent activity, and Code Mode waits. The broader suite was not completely green. See the exact [verification record](docs/VERIFICATION.md).
 
-The GitHub Actions workflow checks the Python toolkit on Linux, macOS, and Windows, plus patch application on the exact pinned source. It does **not** build the Rust runtime or claim cross-platform runtime support.
+GitHub Actions checks the Python toolkit on native x86-64 and ARM64 Linux, macOS, and Windows runners, plus patch application on both cataloged releases. It does **not** build or certify the Rust runtime on those runners.
 
 Reproduce the reporting arithmetic without model calls using `examples/synthetic-before.jsonl` and `synthetic-after.jsonl`; the commands and numeric example are in [MEASUREMENTS.md](docs/MEASUREMENTS.md). These are fabricated examples, not measured savings. Reports export aggregates with explicit missing-data coverage. Observed changes and account allowance savings remain separate.
 

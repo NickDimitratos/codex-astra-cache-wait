@@ -17,7 +17,7 @@ After installing from the GitHub marketplace, start a new Codex task and ask:
 
 Diagnostics and usage reports need Python 3.9+ and work independently of runtime patch support. They use native CLI JSONL or optional OpenCodex logs. See [measurement steps](resources/MEASUREMENTS.md) and [release evidence](resources/RELEASES.md).
 
-The `setup` command builds a tested release or imports a trusted local package, validates it, and enables the explicit launcher. The current runtime entry needs Apple Silicon macOS and the matching Codex release. Source compilation needs Python 3.11+, Git, just, Rustup/Rust 1.95.0, and Apple's command-line tools. See [setup and rollback](resources/COMMUNITY.md) and [API limits](resources/COMPATIBILITY.md). Unsupported releases get diagnostics and reports; they are not silently patched or downgraded.
+The `setup` command builds a cataloged release or imports a trusted local package, validates it, and enables an explicit launcher. Use `--cli` for standalone setup on macOS/Linux/Windows or `--app` for Mac desktop integration. Source-checked candidates require `--experimental` and successful local validation. See [CLI/CPU setup](resources/PORTABILITY.md), [the desktop guide](resources/COMMUNITY.md), and [API limits](resources/COMPATIBILITY.md).
 
 The plugin installs quickly; compiling the optional runtime is a separate, longer setup step. It does not run automatically when the plugin is installed. No prebuilt desktop binaries are redistributed here.
 

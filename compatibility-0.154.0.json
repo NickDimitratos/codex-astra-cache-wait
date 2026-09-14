@@ -1,0 +1,15 @@
+{
+  "upstream": "https://github.com/openai/codex.git",
+  "tag": "rust-v0.154.0",
+  "commit": "6b9826e3aa83b1a5947db50f4332cb9c65f1b340",
+  "cli_version": "codex-cli 0.154.0",
+  "tested_target": "aarch64-apple-darwin",
+  "patch": "patches/astra-cache-and-idle-wait.patch",
+  "patch_sha256": "a5d3253efc1dd80950d16cefd2919f18afadfc84d1bb500a6ee631264ad79a6d",
+  "features": [
+    "reasoning_effort_override",
+    "event_driven_wait"
+  ],
+  "status": "source_checked_local_validation_required",
+  "live_savings_verified": false
+}

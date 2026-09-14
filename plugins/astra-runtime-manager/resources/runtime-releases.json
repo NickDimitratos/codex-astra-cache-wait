@@ -9,6 +9,41 @@
       "package_version": "0.154.0-alpha.6.2+astra-cache-wait.1",
       "rust_toolchain": "1.95.0",
       "evidence": "Local source regressions and macOS package checks; live savings unmeasured"
+    },
+    {
+      "id": "0.154.0-alpha.6.2-portable",
+      "manifest": "compatibility.json",
+      "targets": [
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc"
+      ],
+      "validation": "local_validation_required",
+      "package_version": "0.154.0-alpha.6.2+astra-cache-wait.1",
+      "rust_toolchain": "1.95.0",
+      "evidence": "Exact source patch applies. Native builds and local behavior checks must pass; cross-platform runtime results are not certified."
+    },
+    {
+      "id": "0.154.0-portable",
+      "manifest": "compatibility-0.154.0.json",
+      "targets": [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc"
+      ],
+      "validation": "local_validation_required",
+      "package_version": "0.154.0+astra-cache-wait.1",
+      "rust_toolchain": "1.95.0",
+      "evidence": "Exact source patch applies. Native builds and local behavior checks must pass; cross-platform runtime results are not certified."
     }
   ]
 }

@@ -45,9 +45,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["check", "apply"])
     parser.add_argument("source", type=Path)
+    parser.add_argument("--manifest", type=Path, default=Path(__file__).resolve().parents[1] / "compatibility.json")
     args = parser.parse_args()
     try:
-        process(args.source, Path(__file__).resolve().parents[1] / "compatibility.json",
+        process(args.source, args.manifest,
                 apply=args.action == "apply")
     except (PatchError, OSError, ValueError, KeyError) as error:
         parser.exit(1, f"Cannot {args.action} patch: {error}\n")

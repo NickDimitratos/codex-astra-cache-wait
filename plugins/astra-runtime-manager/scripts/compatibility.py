@@ -12,6 +12,37 @@ import tempfile
 RESOURCES = Path(__file__).resolve().parents[1] / "resources"
 
 
+def normalize_machine(machine):
+    value = machine.lower()
+    return {"amd64": "x86_64", "x64": "x86_64", "arm64": "aarch64"}.get(value, value)
+
+
+def native_target(system=None, machine=None, libc=None):
+    system = system or platform.system()
+    machine = normalize_machine(machine or platform.machine())
+    if machine not in ("x86_64", "aarch64"):
+        return None
+    if system == "Darwin":
+        return machine + "-apple-darwin"
+    if system == "Windows":
+        return machine + "-pc-windows-msvc"
+    if system == "Linux":
+        libc = platform.libc_ver()[0] if libc is None else libc
+        # Some musl Python builds leave libc_ver empty; the loader is definitive.
+        musl = libc == "musl" or (not libc and any(Path('/lib').glob('ld-musl-*.so.1')))
+        return machine + "-unknown-linux-" + ("musl" if musl else "gnu")
+    return None
+
+
+def target_identity(target):
+    for system in ("Darwin", "Linux", "Windows"):
+        for machine in ("x86_64", "aarch64"):
+            for libc in ("glibc", "musl"):
+                if native_target(system, machine, libc) == target:
+                    return system, machine
+    raise ValueError("Unsupported runtime target: " + str(target))
+
+
 def catalog(resources=RESOURCES):
     data = json.loads((resources / "runtime-releases.json").read_text(encoding="utf-8"))
     if data.get("schema_version") != 1:
@@ -22,20 +53,33 @@ def catalog(resources=RESOURCES):
         if not manifest.is_relative_to(resources.resolve()):
             raise ValueError("Release manifest must stay inside plugin resources")
         spec = json.loads(manifest.read_text(encoding="utf-8"))
-        identity = (spec["cli_version"], entry["system"], entry["machine"])
-        if identity in identities:
-            raise ValueError("Duplicate runtime compatibility entry")
-        identities.add(identity)
-        releases.append(dict(entry, spec=spec, manifest_path=manifest))
+        targets = entry.get("targets", [spec.get("tested_target")])
+        for target in targets:
+            if "targets" in entry:
+                system, machine = target_identity(target)
+            else:
+                system, machine = entry["system"], normalize_machine(entry["machine"])
+            identity = (spec["cli_version"], system, machine, target)
+            if identity in identities:
+                raise ValueError("Duplicate runtime compatibility entry")
+            identities.add(identity)
+            resolved_spec = dict(spec)
+            if target:
+                resolved_spec["tested_target"] = target
+            releases.append(dict(entry, system=system, machine=machine, target=target,
+                                 spec=resolved_spec, manifest_path=manifest))
     return releases
 
 
-def select_release(version, system=None, machine=None, resources=RESOURCES):
+def select_release(version, system=None, machine=None, resources=RESOURCES, *, experimental=False, target=None):
     system = system or platform.system()
-    machine = machine or platform.machine()
+    machine = normalize_machine(machine or platform.machine())
+    target = target or native_target(system, machine)
     return next((item for item in catalog(resources)
                  if item["spec"]["cli_version"] == version
-                 and item["system"] == system and item["machine"] == machine), None)
+                 and item["system"] == system and item["machine"] == machine
+                 and (item["target"] is None or item["target"] == target)
+                 and (experimental or item.get("validation") != "local_validation_required")), None)
 
 
 def app_candidates():
@@ -65,7 +109,7 @@ def probe(binary, args):
                                 encoding="utf-8", errors="replace", timeout=15, env=env)
         if result.returncode:
             raise ValueError("CLI probe failed")
-        return result.stdout.strip()
+        return (result.stdout or result.stderr).strip()
 
 
 def inspect_cli(binary):
@@ -73,12 +117,17 @@ def inspect_cli(binary):
               "exec_json": None, "runtime_patch_available": False}
     try:
         version = probe(binary, ["--version"])
-        if not re.fullmatch(r"codex-cli \S+", version):
-            raise ValueError("Unrecognized CLI version response")
         result["version"] = version
+        if not re.fullmatch(r"codex-cli \S+", version):
+            result["version_note"] = "Unrecognized release spelling; capabilities are still probed."
         release = select_release(version)
         result["runtime_patch_available"] = release is not None
         result["release_id"] = release["id"] if release else None
+        candidate = select_release(version, experimental=True)
+        result["experimental_build_available"] = candidate is not None and release is None
+        result["native_target"] = native_target()
+        evidence = json.loads((RESOURCES / "upstream-status.json").read_text(encoding="utf-8"))
+        result["upstream_evidence"] = evidence.get(version)
         help_text = probe(binary, ["--help"])
         result["native_plugins"] = bool(re.search(r"(?m)^\s+plugin\s", help_text))
         if re.search(r"(?m)^\s+exec\s", help_text):
@@ -87,9 +136,11 @@ def inspect_cli(binary):
             result["exec_json"] = False
     except (OSError, ValueError, subprocess.TimeoutExpired):
         result["probe_note"] = "Some capabilities could not be read; no changes were made."
-    result["next_step"] = ("Use setup with the matching desktop app, then restart through its launcher."
+    result["next_step"] = ("Use setup with the matching app or --cli; then use the generated launcher."
                            if result["runtime_patch_available"] else
-                           "Use usage reports; runtime activation requires a tested release entry.")
+                           "Use setup --cli <executable> --experimental for a source-checked candidate; local validation is mandatory."
+                           if result.get("experimental_build_available") else
+                           "Use usage reports and inspect upstream evidence; this source patch is not approved for this release.")
     return result
 
 
@@ -102,6 +153,7 @@ def doctor(cli=None):
         binaries += [app / "Contents/Resources/codex" for app in app_candidates()]
     unique = list(dict.fromkeys(str(path.absolute()) for path in binaries))
     return {"schema_version": 1, "platform": platform.system(), "machine": platform.machine(),
+            "native_target": native_target(),
             "installations": [inspect_cli(Path(path)) for path in unique],
             "usage_reports": "Available independently of runtime patch support; requires a recognized JSONL format.",
             "activation_performed": False,

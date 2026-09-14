@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- Add standalone `setup --cli`, portable Python launchers, and preserved original-CLI fallback after updates.
+- Add native x86-64/ARM64 target selection for macOS, Linux GNU/musl, and Windows MSVC, preserving required sandbox helpers. Unknown CPUs remain unsupported.
+- Add source-checked experimental build entries for stable `0.154.0` and additional platforms for the original release. These require explicit experimental setup and successful local validation; they are not certified cross-platform runtime builds.
+- Record source evidence for older incompatible and newer upstream-fixed effort implementations. Do not force the original patch onto those releases.
+- Inspect executable paths through macOS process listings, Linux procfs, and Windows CIM without reading process arguments. Add native CPU CI coverage and standalone setup documentation.
+
 ## Documentation update after 0.2.0
 
 - Add a plain-language user walkthrough covering installation, compatibility, setup, actual activation, everyday use, updates, removal, and troubleshooting.

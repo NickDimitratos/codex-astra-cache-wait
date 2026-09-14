@@ -55,7 +55,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(package, output_dir):
-    binary = package / "bin/codex"
+    metadata = json.loads((package / "codex-package.json").read_text())
+    assert metadata.get("entrypoint") in ("bin/codex", "bin/codex.exe"), "Unsupported package entrypoint"
+    binary = package / metadata["entrypoint"]
     assert binary.is_file(), "Package must be built first"
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -85,7 +87,7 @@ def main(package, output_dir):
                     "-c", 'model_reasoning_effort="xhigh"',
                     "exec", "--model", "gpt-6-astra", "--skip-git-repo-check",
                     "--json", "Run the local package validation."]
-            result = subprocess.run(args, cwd=work, env=env, capture_output=True, text=True)
+            result = subprocess.run(args, cwd=work, env=env, capture_output=True, text=True, timeout=120)
             (output_dir / "package-smoke.stdout.log").write_text(result.stdout)
             (output_dir / "package-smoke.stderr.log").write_text(result.stderr)
             assert result.returncode == 0, f"CLI failed: see package-smoke.stderr.log ({result.returncode})"

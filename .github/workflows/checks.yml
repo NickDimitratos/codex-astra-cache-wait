@@ -9,8 +9,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ['3.9', '3.13']
+        include:
+          - {os: ubuntu-24.04, python: '3.9', cpu: x86_64}
+          - {os: ubuntu-24.04, python: '3.13', cpu: x86_64}
+          - {os: ubuntu-24.04-arm, python: '3.13', cpu: aarch64}
+          - {os: macos-15, python: '3.9', cpu: aarch64}
+          - {os: macos-15, python: '3.13', cpu: aarch64}
+          - {os: macos-15-intel, python: '3.13', cpu: x86_64}
+          - {os: windows-latest, python: '3.9', cpu: x86_64}
+          - {os: windows-latest, python: '3.13', cpu: x86_64}
+          - {os: windows-11-arm, python: '3.13', cpu: aarch64}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -21,7 +29,16 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Guard, manager, and plugin packaging tests
         run: python -m unittest discover -s tests -v
+      - name: Verify native CPU and process inspection
+        env:
+          EXPECTED_CPU: ${{ matrix.cpu }}
+        run: python -c "import os, platform, sys; sys.path.insert(0, 'plugins/astra-runtime-manager/scripts'); import compatibility, runtime_platform; assert compatibility.normalize_machine(platform.machine()) == os.environ['EXPECTED_CPU']; print(platform.system(), platform.machine(), compatibility.native_target()); print('Inspected executable paths:', len(runtime_platform.running_executables()))"
   patch:
+    strategy:
+      matrix:
+        include:
+          - {tag: rust-v0.154.0-alpha.6.2, manifest: compatibility.json}
+          - {tag: rust-v0.154.0, manifest: compatibility-0.154.0.json}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +49,7 @@ jobs:
           python-version: '3.11'
       - name: Check the patch against its exact upstream revision
         run: |
-          git clone --depth 1 --branch rust-v0.154.0-alpha.6.2 https://github.com/openai/codex.git upstream
-          python scripts/patch_guard.py check upstream
-          python scripts/patch_guard.py apply upstream
+          git clone --depth 1 --branch '${{ matrix.tag }}' https://github.com/openai/codex.git upstream
+          python scripts/patch_guard.py check upstream --manifest '${{ matrix.manifest }}'
+          python scripts/patch_guard.py apply upstream --manifest '${{ matrix.manifest }}'
           git -C upstream apply --check --reverse ../patches/astra-cache-and-idle-wait.patch

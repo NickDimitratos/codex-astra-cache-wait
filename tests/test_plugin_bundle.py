@@ -14,11 +14,13 @@ class PluginBundleTests(unittest.TestCase):
         resources = PLUGIN / "resources"
         mapping = {
             "compatibility.json": "compatibility.json",
+            "compatibility-0.154.0.json": "compatibility-0.154.0.json",
             "LICENSE": "LICENSE", "NOTICE": "NOTICE",
             "COMPATIBILITY.md": "docs/COMPATIBILITY.md",
             "COMMUNITY.md": "docs/COMMUNITY.md",
             "MEASUREMENTS.md": "docs/MEASUREMENTS.md",
             "RELEASES.md": "docs/RELEASES.md",
+            "PORTABILITY.md": "docs/PORTABILITY.md",
             "examples/synthetic-before.jsonl": "examples/synthetic-before.jsonl",
             "examples/synthetic-after.jsonl": "examples/synthetic-after.jsonl",
             "patch_guard.py": "scripts/patch_guard.py",
