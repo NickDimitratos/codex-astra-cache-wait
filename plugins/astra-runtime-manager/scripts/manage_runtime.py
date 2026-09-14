@@ -15,6 +15,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import compatibility
+
 RESOURCES = Path(__file__).resolve().parents[1] / "resources"
 SPEC = json.loads((RESOURCES / "compatibility.json").read_text())
 OWNER = {"owner": "astra-runtime-manager", "schema": 1}
@@ -102,8 +105,6 @@ def is_active(root, commands):
 
 
 def check_app(app):
-    if platform.system() != "Darwin" or platform.machine() != "arm64":
-        raise ManagerError("This release supports Apple Silicon macOS only")
     binary = app / "Contents/Resources/codex"
     host = app / "Contents/Resources/codex-code-mode-host"
     if not binary.is_file() or not host.is_file():
@@ -112,9 +113,21 @@ def check_app(app):
         env = os.environ.copy()
         env["CODEX_HOME"] = temporary
         version = run([binary, "--version"], env=env)
-    if version != SPEC["cli_version"]:
-        raise ManagerError(f"Unsupported Codex version: {version}; expected {SPEC['cli_version']}")
+    if compatibility.select_release(version) is None:
+        raise ManagerError(f"Unsupported Codex version/platform for runtime activation: {version}. "
+                           "Run doctor for available capabilities. Usage reports remain available.")
     return version
+
+
+def app_release(app):
+    version = check_app(app)
+    return compatibility.select_release(version)
+
+
+def check_receipt_app(receipt):
+    version = check_app(Path(receipt["app"]))
+    if version != receipt.get("cli_version", SPEC["cli_version"]):
+        raise ManagerError("The app version changed since installation; the existing runtime must not be activated")
 
 
 def verify_installation(root):
@@ -141,14 +154,15 @@ def status(root):
         return result
     receipt = verify_installation(root)
     result.update({"installed": True, "enabled_for_launcher": (root / "enabled").is_file(),
-                   "launcher": str(root / "launch-patched.command"), "origin": receipt["origin"]})
+                   "launcher": str(root / "launch-patched.command"), "origin": receipt["origin"],
+                   "expected_cli": receipt.get("cli_version", SPEC["cli_version"])})
     try:
         result["running"] = is_active(root, running_commands())
     except ManagerError:
         result["running"] = None
         result["process_status"] = "unknown: process inspection was unavailable"
     try:
-        check_app(Path(receipt["app"]))
+        check_receipt_app(receipt)
         result["app_compatible"] = True
     except ManagerError as error:
         result["app_compatible"] = False
@@ -156,7 +170,8 @@ def status(root):
     return result
 
 
-def create_launchers(root, app):
+def create_launchers(root, app, release=None):
+    spec = release["spec"] if release else SPEC
     bundled = shlex.quote(str(app / "Contents/Resources/codex"))
     wrapper = f'''#!/bin/sh
 set -eu
@@ -164,10 +179,10 @@ managed_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 bundled={bundled}
 if [ ! -f "$managed_dir/enabled" ] || [ ! -f "$managed_dir/receipt.json" ] ||
    [ ! -x "$managed_dir/runtime/bin/codex" ] ||
-   [ "$("$bundled" --version)" != {shlex.quote(SPEC['cli_version'])} ]; then
+   [ "$("$bundled" --version)" != {shlex.quote(spec['cli_version'])} ]; then
     exec "$bundled" "$@"
 fi
-exec "$managed_dir/runtime/bin/codex" --enable reasoning_effort_override --enable event_driven_wait "$@"
+exec "$managed_dir/runtime/bin/codex" {shlex.join([arg for name in spec['features'] for arg in ('--enable', name)])} "$@"
 '''
     launcher = f'''#!/bin/sh
 set -eu
@@ -190,14 +205,15 @@ exec /usr/bin/open -a {shlex.quote(str(app))} --env "CODEX_CLI_PATH=$managed_dir
 
 
 def install_package(root, package, app, origin="local_package"):
-    check_app(app)
+    release = app_release(app)
+    spec = release["spec"]
     if (root / "runtime").exists():
         raise ManagerError("A runtime is already present; inspect status or remove it before replacing it")
     hash_tree(package)  # Reject symlinks before copying or executing anything.
     metadata = json.loads((package / "codex-package.json").read_text())
-    if (metadata.get("target") != SPEC["tested_target"] or metadata.get("entrypoint") != "bin/codex"
+    if (metadata.get("target") != spec["tested_target"] or metadata.get("entrypoint") != "bin/codex"
             or metadata.get("variant") != "codex" or metadata.get("layoutVersion") != 1
-            or metadata.get("version") != "0.154.0-alpha.6.2+astra-cache-wait.1"):
+            or metadata.get("version") != release["package_version"]):
         raise ManagerError("Package layout, version, or platform is not supported")
     with tempfile.TemporaryDirectory(prefix=".staging-", dir=root) as temporary:
         candidate = Path(temporary) / "runtime"
@@ -220,10 +236,11 @@ def install_package(root, package, app, origin="local_package"):
                 raise ManagerError("A package validation check did not pass")
         hashes = hash_tree(candidate)
         candidate.rename(root / "runtime")
-    create_launchers(root, app)
+    create_launchers(root, app, release)
     write_json(root / "receipt.json", {"app": str(app), "origin": origin,
-               "source_commit": SPEC["commit"] if origin == "source_build" else None,
-               "patch_sha256": SPEC["patch_sha256"] if origin == "source_build" else None,
+               "cli_version": spec["cli_version"], "release_id": release["id"],
+               "source_commit": spec["commit"] if origin == "source_build" else None,
+               "patch_sha256": spec["patch_sha256"] if origin == "source_build" else None,
                "files_sha256": hashes, "checks": checks,
                "validated_at": datetime.now(timezone.utc).isoformat()})
     return {"installed": True, "enabled_for_launcher": False,
@@ -231,7 +248,8 @@ def install_package(root, package, app, origin="local_package"):
 
 
 def build_and_install(root, app):
-    check_app(app)
+    release = app_release(app)
+    spec = release["spec"]
     if (root / "runtime").exists():
         raise ManagerError("A runtime is already present; inspect status before building another")
     if sys.version_info < (3, 11):
@@ -239,29 +257,29 @@ def build_and_install(root, app):
     for command in ("git", "just", "cargo", "rustup"):
         if not shutil.which(command):
             raise ManagerError(f"Missing build prerequisite: {command}. See the plugin setup instructions.")
-    run(["rustup", "run", "1.95.0", "rustc", "--version"])
+    run(["rustup", "run", release["rust_toolchain"], "rustc", "--version"])
     with tempfile.TemporaryDirectory(prefix="codex-astra-build-") as temporary:
         work = Path(temporary)
         source = work / "codex"
         package = work / "package"
         print("Fetching the pinned upstream release...", flush=True)
-        run(["git", "clone", "--depth", "1", "--branch", SPEC["tag"], SPEC["upstream"], source])
+        run(["git", "clone", "--depth", "1", "--branch", spec["tag"], spec["upstream"], source])
         sys.path.insert(0, str(RESOURCES))
         from patch_guard import PatchError, process
         try:
-            process(source, RESOURCES / "compatibility.json", apply=True)
+            process(source, release["manifest_path"], apply=True)
         except PatchError as error:
             raise ManagerError(f"Source compatibility check failed: {error}") from error
         log = root / "build.log"
         print(f"Building the runtime; progress is saved in {log}", flush=True)
         env = os.environ.copy()
-        env["RUSTUP_TOOLCHAIN"] = "1.95.0"
+        env["RUSTUP_TOOLCHAIN"] = release["rust_toolchain"]
         env["PATH"] = str(Path(sys.executable).resolve().parent) + os.pathsep + env.get("PATH", "")
         with log.open("w") as output:
             result = subprocess.run([
-                "just", "assemble-codex-package", "--target", SPEC["tested_target"],
+                "just", "assemble-codex-package", "--target", spec["tested_target"],
                 "--variant", "codex", "--cargo-profile", "release", "--package-version",
-                "0.154.0-alpha.6.2+astra-cache-wait.1", "--package-dir", str(package),
+                release["package_version"], "--package-dir", str(package),
                 "--code-mode-host-bin", str(app / "Contents/Resources/codex-code-mode-host")],
                 cwd=source, env=env, stdout=output, stderr=subprocess.STDOUT)
         if result.returncode:
@@ -271,7 +289,7 @@ def build_and_install(root, app):
 
 def enable(root):
     receipt = verify_installation(root)
-    check_app(Path(receipt["app"]))
+    check_receipt_app(receipt)
     (root / "enabled").write_text("enabled for explicit launcher\n")
     return {"enabled_for_launcher": True, "restart_required": True,
             "launcher": str(root / "launch-patched.command")}
@@ -286,7 +304,7 @@ def disable(root):
 def launch(root):
     receipt = verify_installation(root)
     app = Path(receipt["app"])
-    check_app(app)
+    check_receipt_app(receipt)
     if not (root / "enabled").is_file():
         raise ManagerError("Enable the runtime before launching it")
     commands = running_commands()
@@ -316,27 +334,39 @@ def remove(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["status", "install", "enable", "disable", "launch", "remove"])
+    parser.add_argument("action", choices=["doctor", "status", "setup", "install", "enable", "disable", "launch", "remove"])
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--app", type=Path, default=Path("/Applications/ChatGPT.app"))
+    parser.add_argument("--app", type=Path, help="Desktop app location; detected when exactly one is found")
+    parser.add_argument("--cli", help="CLI executable to inspect with doctor")
     parser.add_argument("--package", type=Path, help="Import a trusted local package instead of compiling source")
     args = parser.parse_args()
     root = args.root.expanduser().absolute()
     try:
-        if args.action == "status":
+        if args.action == "doctor":
+            result = compatibility.doctor(args.cli)
+        elif args.action == "status":
             result = status(root)
         elif args.action in ("remove", "disable") and not root.exists():
             result = {"installed": False}
         else:
-            if args.action == "install":
+            if args.action in ("setup", "install"):
+                app = compatibility.discover_app(args.app)
+                check_app(app)  # Preflight before creating any managed files.
                 claim_root(root)
             else:
                 require_owner(root)
             with operation_lock(root):
-                if args.action == "install":
-                    app = args.app.expanduser().resolve(strict=True)
-                    result = (install_package(root, args.package.expanduser().resolve(strict=True), app)
-                              if args.package else build_and_install(root, app))
+                if args.action in ("setup", "install"):
+                    if args.action == "setup" and (root / "receipt.json").is_file():
+                        receipt = verify_installation(root)
+                        if Path(receipt["app"]).resolve() != app:
+                            raise ManagerError("Existing runtime belongs to a different app; inspect status first")
+                        result = {"installed": True}
+                    else:
+                        result = (install_package(root, args.package.expanduser().resolve(strict=True), app)
+                                  if args.package else build_and_install(root, app))
+                    if args.action == "setup":
+                        result.update(enable(root))
                 else:
                     result = {"enable": enable, "disable": disable, "launch": launch, "remove": remove}[args.action](root)
         print(json.dumps(result, indent=2))

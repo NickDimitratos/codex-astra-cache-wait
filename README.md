@@ -1,6 +1,22 @@
-# Codex Astra cache and wait patch
+# Astra Runtime Manager for the Codex community
 
-An experimental source patch for **Codex CLI 0.154.0-alpha.6.2**. It addresses two avoidable sources of token usage: losing a reusable prompt prefix when reasoning effort changes, and returning empty timer results that can trigger another model request.
+Check CLI compatibility, measure token usage, and manage a separate experimental Astra runtime. **OpenCodex is optional.** Diagnostics and reporting do not require a custom runtime, API key, remote service, or model probe.
+
+**Installing the plugin does not activate the runtime patch.** The source patch currently targets Codex CLI `0.154.0-alpha.6.2`; it addresses cache reuse when reasoning effort changes and empty waits that can trigger another model request.
+
+## Community compatibility
+
+| Capability | Supported scope |
+| --- | --- |
+| CLI detection | Version-independent help/version probes; unknown capabilities are explicit |
+| Native CLI usage reports | Recognized `codex exec --json` layout; cumulative thread totals counted once |
+| OpenCodex reports | Optional request-level usage JSONL, with request deduplication |
+| Plugin installation | Releases with native plugin support; older CLIs can use the standalone Python tools |
+| Runtime activation | Exact tested version/platform pairs in the release catalog |
+| Current runtime entry | `0.154.0-alpha.6.2`, Apple Silicon macOS, matching desktop app |
+| Automatically patch every past/future release | **Not supported**; source changes need release-specific validation |
+
+Start with the [community setup guide](docs/COMMUNITY.md), [compatibility evidence](docs/RELEASES.md), and [measurement guide](docs/MEASUREMENTS.md). Unknown releases keep their original runtime. The tool does not downgrade a CLI or force an old patch onto it.
 
 **Status: locally tested; live token savings have not been established.** This is an independent community experiment. It is not an official OpenAI or OpenCodex release, a universal installer, or a demonstrated fix for account allowance accounting.
 
@@ -12,7 +28,7 @@ An experimental source patch for **Codex CLI 0.154.0-alpha.6.2**. It addresses t
 
 The cache approach follows OpenAI's guidance to keep request-level effort stable when appending configuration updates. See [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) and [reasoning updates and compatibility](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation).
 
-## Who should try this
+## Who should try the runtime patch
 
 Developers who can build and test a custom Codex runtime and are using the **exact pinned release**. Start with disposable tasks and compare task quality as well as token usage.
 
@@ -41,9 +57,13 @@ codex plugin add astra-runtime-manager@astra-runtime
 
 If an older CLI or OpenCodex shim is first on your PATH, use the compatible desktop app's bundled CLI for both commands, for example `/Applications/ChatGPT.app/Contents/Resources/codex`.
 
-Start a **new Codex task** and ask “Check my Astra patch status” or “Set up the Astra runtime patch.” The plugin downloads from this GitHub marketplace; runtime setup is a separate source build. Installing the plugin does not activate the patch or change the model/effort you selected.
+Start a **new Codex task/session** and ask “Use Astra Runtime Manager to check my CLI compatibility.” This follows the [official plugin workflow](https://learn.chatgpt.com/docs/plugins). The diagnostic checks PATH and common app locations, or an explicit `--cli` path. From a clone, run `python3 plugins/astra-runtime-manager/scripts/manage_runtime.py doctor`. On Windows, use `python` if that is your Python 3.9+ command.
+
+To activate a supported runtime, ask “Set up and enable the Astra runtime, validate it, and give me the launcher. Keep my current tasks running.” The `setup` command builds or imports a package, validates it, and enables its launcher. Finish tasks, quit Codex, launch through the returned `launch-patched.command`, then verify **`running: true`**. `installed` and `enabled_for_launcher` do not prove activation.
 
 Runtime setup requires the exact supported app version, Apple Silicon macOS, Python 3.11+, Git, just, Rustup/Rust 1.95.0, Apple's command-line tools, network access, and substantial build disk space. It validates the package, keeps it under `~/.local/share/codex-astra-cache-wait`, and supplies an explicit launcher. Finish active tasks and quit Codex before using that launcher.
+
+To update this GitHub installation, run `codex plugin marketplace upgrade astra-runtime`, then `codex plugin add astra-runtime-manager@astra-runtime`, and start a new task/session. Updating the plugin does not silently replace a separately installed runtime.
 
 To undo setup, ask “Restore normal Codex and remove the managed runtime.” Remove the managed runtime **before** uninstalling the plugin. Codex's plugin toggle and Uninstall button manage the plugin bundle; they do not undo an external runtime installation. Read the [plugin guide](plugins/astra-runtime-manager/README.md) for its status, enable, disable, and removal controls.
 
@@ -67,7 +87,9 @@ Read the [build, validation, activation, and rollback instructions](docs/BUILD.m
 
 The existing verification covered stable prefixes, reasoning changes, trusted history, resume/fork, unsupported configurations, agent activity, and Code Mode waits. The broader suite was not completely green. See the exact [verification record](docs/VERIFICATION.md).
 
-The included GitHub Actions workflow checks the Python guard, runtime manager, plugin packaging, and patch application. It does **not** build the macOS runtime, run the full Rust suite, or claim cross-platform runtime support.
+The GitHub Actions workflow checks the Python toolkit on Linux, macOS, and Windows, plus patch application on the exact pinned source. It does **not** build the Rust runtime or claim cross-platform runtime support.
+
+Reproduce the reporting arithmetic without model calls using `examples/synthetic-before.jsonl` and `synthetic-after.jsonl`; the commands and numeric example are in [MEASUREMENTS.md](docs/MEASUREMENTS.md). These are fabricated examples, not measured savings. Reports export aggregates with explicit missing-data coverage. Observed changes and account allowance savings remain separate.
 
 For useful before/after results, follow [BENCHMARKING.md](docs/BENCHMARKING.md). There is no fixed savings percentage: an unchanged-effort workload with no empty waits may see little or no benefit. Cached tokens, fresh tokens, reasoning tokens, and account allowance are different measurements.
 

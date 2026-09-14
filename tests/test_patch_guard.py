@@ -23,6 +23,7 @@ class PatchGuardTests(unittest.TestCase):
         self.git("config", "user.name", "Patch Test")
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "commit.gpgsign", "false")
+        self.git("config", "core.autocrlf", "false")
         (self.source / "example.txt").write_text("before\n")
         self.git("add", "example.txt")
         self.git("commit", "-qm", "fixture")

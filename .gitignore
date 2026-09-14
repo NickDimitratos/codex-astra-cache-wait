@@ -12,3 +12,8 @@ __pycache__/
 *.sqlite*
 .env
 .env.*
+/before.json
+/after.json
+/comparison.json
+/before.jsonl
+/after.jsonl

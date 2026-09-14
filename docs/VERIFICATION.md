@@ -36,7 +36,16 @@ Portable package smoke scripts use a temporary Codex home. `package_smoke.py` us
 
 The manager's source-build command uses the same pinned upstream assembly path used for the earlier release build. The lifecycle check reused that local package; it did not perform a second full source build or restart the desktop app.
 
-## What remains unproven
+## Community toolkit update (0.2.0)
+
+- 56 Python checks passed locally: existing guard/manager tests plus version discovery, exact catalog matching, native cumulative counter handling, OpenCodex deduplication, missing usage, report privacy, and numeric comparisons.
+- Actual CLI capability checks succeeded for installed 0.153.4 and 0.154.0-alpha.6.2. Native usage emission was inspected in the official source of both releases; both return cumulative thread totals.
+- The official plugin and skill validators passed.
+- A temporary setup imported the previously validated runtime, passed both local package checks, enabled only its launcher, and remained inactive. Repeated setup preserved the receipt without rebuilding. The launcher refused an open desktop, disable restored the bundled CLI, and removal deleted only the temporary managed directory.
+- Synthetic before/after examples reproduce their documented counts without model calls. They are not savings evidence.
+- CI now runs the Python checks on Linux, macOS, and Windows with Python 3.9 and 3.13, with a separate exact-source patch check. This checks the toolkit; it does not certify the Rust runtime on those operating systems.
+
+## Unproven outcomes
 
 No controlled measurement has established token savings, improved account allowance, live backend compatibility for every reasoning mode, or unchanged task quality across workloads. A previous usage observation happened before activation and cannot establish causality. Full-suite success and runtime compatibility on other operating systems are also unproven.
 

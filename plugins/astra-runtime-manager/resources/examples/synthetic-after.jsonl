@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"synthetic-after-a"}
+{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":650,"output_tokens":75,"reasoning_output_tokens":15}}
+{"type":"thread.started","thread_id":"synthetic-after-b"}
+{"type":"turn.completed","usage":{"input_tokens":800,"cached_input_tokens":650,"output_tokens":75,"reasoning_output_tokens":15}}

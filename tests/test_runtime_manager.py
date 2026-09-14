@@ -133,7 +133,7 @@ class RuntimeManagerTests(unittest.TestCase):
         receipt = self.create_installation()
         (self.root / "enabled").write_text("yes")
         app_process = receipt["app"] + "/Contents/MacOS/ChatGPT"
-        with patch.object(manager, "check_app"), patch.object(manager, "running_commands", return_value=[app_process]):
+        with patch.object(manager, "check_app", return_value=manager.SPEC["cli_version"]), patch.object(manager, "running_commands", return_value=[app_process]):
             with self.assertRaisesRegex(manager.ManagerError, "running"):
                 manager.launch(self.root)
 
@@ -145,6 +145,13 @@ class RuntimeManagerTests(unittest.TestCase):
 
     def test_root_name_prefix_does_not_block_unrelated_installation(self):
         self.assertFalse(manager.is_active(self.root, [str(self.root) + "-other/runtime/bin/codex"]))
+
+    def test_new_supported_app_version_still_cannot_activate_old_runtime(self):
+        self.create_installation()
+        with patch.object(manager, "check_app", return_value="codex-cli 9.9.9"):
+            with self.assertRaisesRegex(manager.ManagerError, "version changed"):
+                manager.enable(self.root)
+        self.assertFalse((self.root / "enabled").exists())
 
 
 if __name__ == "__main__":

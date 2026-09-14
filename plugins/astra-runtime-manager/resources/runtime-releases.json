@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "releases": [
+    {
+      "id": "0.154.0-alpha.6.2-macos-arm64",
+      "manifest": "compatibility.json",
+      "system": "Darwin",
+      "machine": "arm64",
+      "package_version": "0.154.0-alpha.6.2+astra-cache-wait.1",
+      "rust_toolchain": "1.95.0",
+      "evidence": "Local source regressions and macOS package checks; live savings unmeasured"
+    }
+  ]
+}

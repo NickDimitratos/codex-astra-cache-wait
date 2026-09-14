@@ -1,7 +1,7 @@
 {
   "name": "astra-runtime-manager",
-  "version": "0.1.0",
-  "description": "Manage an experimental, version-pinned Astra runtime patch for Codex on Apple Silicon macOS.",
+  "version": "0.2.0",
+  "description": "Check Codex CLI compatibility, report token usage, and manage tested experimental Astra runtimes.",
   "author": {
     "name": "Nick Dimitratos",
     "url": "https://github.com/NickDimitratos"
@@ -9,8 +9,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Astra Runtime Manager",
-    "shortDescription": "Set up, inspect, launch, and remove the Astra runtime patch.",
-    "longDescription": "Manage the separate experimental runtime without replacing the original Codex app. Requires the pinned Codex release and Apple Silicon macOS. A restart is required for activation; token savings are unmeasured.",
+    "shortDescription": "Check compatibility, measure usage, and manage tested runtimes.",
+    "longDescription": "Community tools for CLI capability checks and private usage comparisons. Runtime activation requires a tested release and platform; installing the plugin alone does not enable the patch. Savings remain unmeasured.",
     "developerName": "Nick Dimitratos",
     "category": "Developer Tools",
     "capabilities": [
@@ -18,9 +18,9 @@
     ],
     "websiteURL": "https://github.com/NickDimitratos/codex-astra-cache-wait",
     "defaultPrompt": [
-      "Check my Astra patch status.",
-      "Set up the Astra runtime patch.",
-      "Restore normal Codex and remove the managed runtime."
+      "Check my CLI compatibility and Astra runtime status.",
+      "Compare my before and after token usage.",
+      "Set up and enable the supported Astra runtime."
     ]
   },
   "repository": "https://github.com/NickDimitratos/codex-astra-cache-wait",
