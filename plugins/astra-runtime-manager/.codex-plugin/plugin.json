@@ -1,6 +1,6 @@
 {
   "name": "astra-runtime-manager",
-  "version": "0.2.0",
+  "version": "0.2.0+codex.20260914200604",
   "description": "Check Codex CLI compatibility, report token usage, and manage tested experimental Astra runtimes.",
   "author": {
     "name": "Nick Dimitratos",

@@ -2,6 +2,10 @@
 
 A community Codex plugin for CLI capability checks, private usage comparisons, and separate experimental runtime management. It provides a skill and local Python commands; it has no remote service, paid model endpoint, automatic startup hook, or credential store.
 
+**[Start with the user guide](resources/COMMUNITY.md):** install → check compatibility → optionally set up → quit and launch → verify → measure. It includes copy-and-paste requests, expected status output, an expectations table, troubleshooting, and complete uninstall instructions.
+
+Installing this plugin alone does not reduce usage. The local diagnostic/reporting scripts make zero model calls; conversations with Codex and benchmark tasks consume normal usage. No controlled live savings percentage is established, and little or no runtime benefit is possible for some workloads.
+
 After installing from the GitHub marketplace, start a new Codex task and ask:
 
 - “Check my Astra patch status.”

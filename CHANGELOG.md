@@ -1,5 +1,11 @@
 # Changelog
 
+## Documentation update after 0.2.0
+
+- Add a plain-language user walkthrough covering installation, compatibility, setup, actual activation, everyday use, updates, removal, and troubleshooting.
+- Explain expected results and unknown savings, including the distinction between zero-call local reports and normal assistant/benchmark usage.
+- Add baseline/patched capture commands and a checklist for useful community measurements. Bundle the same guidance with the installed plugin.
+
 ## 0.2.0
 
 - Add CLI capability discovery across version numbers, with explicit unknown/unsupported states and PATH/desktop distinction.

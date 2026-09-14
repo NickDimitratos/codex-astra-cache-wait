@@ -4,9 +4,25 @@ Use Python 3.9+ and the plugin's `scripts/usage_report.py`. Commands below assum
 
 ## Native CLI, without OpenCodex
 
-Capture work you already intend to run with `codex exec --json "Your agreed benchmark task" > before.jsonl`. This runs a real task and consumes usage; the reporting tool itself makes no model calls.
+Capture work you already intend to run. These capture commands run real tasks and consume normal model usage; the reporting tool itself makes no model calls. For reports only, `codex exec --json "Your agreed benchmark task" > before.jsonl` captures a task from your current CLI.
 
-Use fresh threads and disposable, identical project snapshots for each benchmark. Do not resume a previous thread for comparison runs. For the after run, invoke the patched wrapper; using the normal CLI again measures another unpatched run.
+For a patch comparison, follow [setup and activation](COMMUNITY.md) first and use the **same supported CLI release** for both runs. The example below uses the current supported Mac app and the default managed directory. Adjust the app path if yours differs. Set the same model/effort and provider configuration for both runs; this comparison should use the supported Astra mode.
+
+Run from a disposable benchmark project with your chosen task and a new output filename:
+
+```sh
+"/Applications/ChatGPT.app/Contents/Resources/codex" exec --json "Your agreed benchmark task" > before.jsonl
+```
+
+Save that capture, then use an identical fresh project snapshot and fresh thread for the after run. Confirm the managed runtime is enabled and matches the app before invoking its wrapper; the wrapper falls back to the original CLI when disabled or incompatible.
+
+```sh
+"$HOME/.local/share/codex-astra-cache-wait/codex-patched" exec --json "Your agreed benchmark task" > after.jsonl
+```
+
+Do not resume earlier threads. The shell's `>` redirection can overwrite a capture, so choose unused filenames and preserve each run separately. Using the normal CLI again for the after run measures another unpatched run. These generic captures show the workflow; a task must exercise the affected effort-change or wait behavior to test those changes.
+
+Put the two captures in this toolkit's repository directory, or replace their names below with their actual paths. From this repository, summarize and compare:
 
 ```sh
 python3 plugins/astra-runtime-manager/scripts/usage_report.py summarize before.jsonl --format codex-exec --output before.json
@@ -37,6 +53,21 @@ Reports expose token totals, model/effort grouping when available, failures, ret
 - Token totals alone cannot establish account allowance or dollar savings. Those fields remain unknown.
 
 Record CLI version, platform, provider/model mode, effort, runtime activation evidence, workload, task quality, repetitions, and usage coverage alongside the aggregates. Native captures do not reliably identify model/effort; record them separately. Reports do not automatically verify runtime activation.
+
+### A useful report to share
+
+Copy this checklist alongside your aggregate report, filling in actual observations:
+
+- Plugin version and both CLI versions:
+- OS/architecture and provider/model/effort:
+- How each runtime was launched and how activation was checked:
+- Task description, success criteria, and whether both completed correctly:
+- Repeated paired trials and their order:
+- Sample unit/count, usage coverage, and missing measurements:
+- Fresh input, cached input, output, errors/retries, and time per completed task where available:
+- Workload/configuration differences and whether other account activity overlapped:
+
+A decrease in one unmatched time window is an observation, not proof of a patch benefit. Only provide aggregate data and a redacted task description for public reports. Keep causal savings and account allowance conclusions unknown when the evidence cannot establish them.
 
 ## Reproduce a synthetic example
 

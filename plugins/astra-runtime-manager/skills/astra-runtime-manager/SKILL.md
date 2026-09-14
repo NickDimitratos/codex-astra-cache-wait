@@ -9,6 +9,8 @@ Use the plugin scripts for compatibility checks, private usage reports, and mana
 
 Resolve the plugin root as the directory two levels above this SKILL.md's directory. All commands below use the absolute path to `scripts/manage_runtime.py` inside that root. The default managed directory is `~/.local/share/codex-astra-cache-wait`; keep it separate from Codex's plugin cache, the signed application, and the user's project.
 
+For onboarding, everyday use, expected results, or troubleshooting, read `resources/COMMUNITY.md` and explain the steps relevant to the user's current state. Distinguish plugin installation, runtime setup, and observed activation. The local scripts make no model calls; assistant conversations and benchmark tasks still consume normal usage. Show synthetic percentages only as labeled arithmetic examples, never expected savings.
+
 ## Check status
 
 First run `python3 <plugin-root>/scripts/manage_runtime.py doctor`. It detects PATH and desktop CLI versions separately; `--cli /absolute/path/to/codex` selects one. Unknown releases still get capability checks and reporting guidance. A found feature name is not proof that the source patch is present. Read `resources/RELEASES.md` for compatibility evidence.

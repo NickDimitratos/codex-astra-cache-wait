@@ -4,6 +4,21 @@ Check CLI compatibility, measure token usage, and manage a separate experimental
 
 **Installing the plugin does not activate the runtime patch.** The source patch currently targets Codex CLI `0.154.0-alpha.6.2`; it addresses cache reuse when reasoning effort changes and empty waits that can trigger another model request.
 
+## Start here
+
+**[Read the step-by-step user guide](docs/COMMUNITY.md)** for installation commands, requests to paste into Codex, activation checks, everyday use, expected results, troubleshooting, and removal.
+
+The normal path is **install plugin → check compatibility → optionally build runtime → quit and launch → verify → measure**. You can stop after the compatibility check and use the reporting tools with your normal runtime.
+
+| What you want to know | Short answer |
+| --- | --- |
+| Will installing the plugin immediately save tokens? | No. Runtime activation is a separate step. |
+| Does it work with my CLI? | Capability checks are version-independent; runtime activation currently requires the exact supported release/platform below. |
+| How much will I save? | No controlled live percentage is established. Little or no benefit is possible. |
+| Do usage reports cost model tokens? | The local scripts make zero model calls. Asking Codex to interpret results uses normal assistant usage. |
+| How do I know it is active? | Check `running: true` after restarting through the generated launcher; also check model/API compatibility. |
+| Can I undo it? | Yes. Quit the patched instance and open Codex normally; remove the managed runtime before uninstalling the plugin. |
+
 ## Community compatibility
 
 | Capability | Supported scope |
@@ -16,7 +31,7 @@ Check CLI compatibility, measure token usage, and manage a separate experimental
 | Current runtime entry | `0.154.0-alpha.6.2`, Apple Silicon macOS, matching desktop app |
 | Automatically patch every past/future release | **Not supported**; source changes need release-specific validation |
 
-Start with the [community setup guide](docs/COMMUNITY.md), [compatibility evidence](docs/RELEASES.md), and [measurement guide](docs/MEASUREMENTS.md). Unknown releases keep their original runtime. The tool does not downgrade a CLI or force an old patch onto it.
+See [compatibility evidence](docs/RELEASES.md) and [measurement commands](docs/MEASUREMENTS.md). Unknown releases keep their original runtime. The tool does not downgrade a CLI or force an old patch onto it.
 
 **Status: locally tested; live token savings have not been established.** This is an independent community experiment. It is not an official OpenAI or OpenCodex release, a universal installer, or a demonstrated fix for account allowance accounting.
 
