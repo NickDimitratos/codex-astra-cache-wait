@@ -1,0 +1,808 @@
+diff --git a/codex-rs/core/config.schema.json b/codex-rs/core/config.schema.json
+index 2d5d268..f5a7495 100644
+--- a/codex-rs/core/config.schema.json
++++ b/codex-rs/core/config.schema.json
+@@ -732,6 +732,9 @@
+             "enable_request_compression": {
+               "type": "boolean"
+             },
++            "event_driven_wait": {
++              "type": "boolean"
++            },
+             "exec_permission_approvals": {
+               "type": "boolean"
+             },
+@@ -6127,6 +6130,9 @@
+         "enable_request_compression": {
+           "type": "boolean"
+         },
++        "event_driven_wait": {
++          "type": "boolean"
++        },
+         "exec_permission_approvals": {
+           "type": "boolean"
+         },
+diff --git a/codex-rs/core/src/session/reasoning_effort.rs b/codex-rs/core/src/session/reasoning_effort.rs
+index c11d010..001e05c 100644
+--- a/codex-rs/core/src/session/reasoning_effort.rs
++++ b/codex-rs/core/src/session/reasoning_effort.rs
+@@ -13,7 +13,46 @@ use codex_protocol::models::ConfigurationReasoning;
+ use codex_protocol::models::ResponseItem;
+ use codex_protocol::openai_models::ReasoningEffort;
+ 
++#[cfg(test)]
++#[path = "reasoning_effort_tests.rs"]
++mod tests;
++
+ impl Session {
++    /// Keeps the request prefix anchored while trusted history selects the current effort.
++    pub(crate) async fn request_reasoning_effort(
++        &self,
++        settings: &ResolvedStepSettings,
++    ) -> Option<ReasoningEffort> {
++        if self
++            .effort_for_configuration_update(settings)
++            .await
++            .is_none()
++        {
++            return settings.reasoning_effort().cloned();
++        }
++        let state = self.state.lock().await;
++        state
++            .history
++            .annotated_items()
++            .iter()
++            .find_map(|envelope| {
++                if !envelope
++                    .metadata
++                    .as_ref()
++                    .is_some_and(|metadata| metadata.harness_authored_configuration)
++                {
++                    return None;
++                }
++                match &envelope.item {
++                    ResponseItem::ConfigurationUpdate { reasoning } => {
++                        Some(reasoning.effort.clone())
++                    }
++                    _ => None,
++                }
++            })
++            .or_else(|| settings.reasoning_effort().cloned())
++    }
++
+     /// Establishes the selected effort in surviving history, independent of replayed settings.
+     pub(crate) async fn record_reasoning_effort_override(&self, step_context: &StepContext) {
+         let settings = &step_context.settings;
+@@ -64,11 +103,12 @@ impl Session {
+         .await;
+     }
+ 
+-    async fn effort_for_configuration_update(
++    pub(super) async fn effort_for_configuration_update(
+         &self,
+         settings: &ResolvedStepSettings,
+     ) -> Option<ReasoningEffort> {
+         if !self.enabled(Feature::ReasoningEffortOverride)
++            || settings.model_info.slug != "gpt-6-astra"
+             || !settings.model_info.use_responses_lite
+             || !self.provider().await.is_openai()
+         {
+diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
+index 4719e1d..a0be6b6 100644
+--- a/codex-rs/core/src/session/turn.rs
++++ b/codex-rs/core/src/session/turn.rs
+@@ -420,9 +420,18 @@ pub(crate) async fn run_turn(
+ 
+             // Construct the input that we will send to the model.
+             let sampling_request_input: Vec<ResponseItem> = async {
+-                sess.clone_history()
++                let mut input = sess
++                    .clone_history()
+                     .await
+-                    .for_prompt(&step_context.settings.model_info.input_modalities)
++                    .for_prompt(&step_context.settings.model_info.input_modalities);
++                if sess
++                    .effort_for_configuration_update(&step_context.settings)
++                    .await
++                    .is_none()
++                {
++                    input.retain(|item| !matches!(item, ResponseItem::ConfigurationUpdate { .. }));
++                }
++                input
+             }
+             .instrument(trace_span!("run_turn.prepare_sampling_request_input"))
+             .await;
+@@ -2307,7 +2316,7 @@ async fn try_run_sampling_request(
+             prompt,
+             &step_context.settings.model_info,
+             &step_context.session_telemetry,
+-            step_context.settings.reasoning_effort().cloned(),
++            sess.request_reasoning_effort(&step_context.settings).await,
+             step_context.settings.reasoning_summary,
+             step_context.settings.service_tier.clone(),
+             responses_metadata,
+diff --git a/codex-rs/core/src/tools/code_mode/wait_handler.rs b/codex-rs/core/src/tools/code_mode/wait_handler.rs
+index e2c31e4..e471478 100644
+--- a/codex-rs/core/src/tools/code_mode/wait_handler.rs
++++ b/codex-rs/core/src/tools/code_mode/wait_handler.rs
+@@ -1,6 +1,8 @@
++use codex_features::Feature;
+ use serde::Deserialize;
+ 
+ use crate::function_tool::FunctionCallError;
++use crate::tools::context::FunctionToolOutput;
+ use crate::tools::context::ToolInvocation;
+ use crate::tools::context::ToolOutput;
+ use crate::tools::context::ToolPayload;
+@@ -24,18 +26,14 @@ pub struct CodeModeWaitHandler;
+ #[derive(Debug, Deserialize)]
+ struct ExecWaitArgs {
+     cell_id: String,
+-    #[serde(default = "default_wait_yield_time_ms")]
+-    yield_time_ms: u64,
++    #[serde(default)]
++    yield_time_ms: Option<u64>,
+     #[serde(default)]
+     max_tokens: Option<usize>,
+     #[serde(default)]
+     terminate: bool,
+ }
+ 
+-fn default_wait_yield_time_ms() -> u64 {
+-    DEFAULT_WAIT_YIELD_TIME_MS
+-}
+-
+ fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
+ where
+     T: for<'de> Deserialize<'de>,
+@@ -94,6 +92,18 @@ impl CodeModeWaitHandler {
+                 })?;
+                 let exec = ExecContext { session, turn };
+                 let started_at = std::time::Instant::now();
++                let event_driven = args.yield_time_ms.is_none()
++                    && exec.turn.config.features.enabled(Feature::EventDrivenWait);
++                let turn_state = exec
++                    .session
++                    .input_queue
++                    .turn_state_for_sub_id(&exec.session.active_turn, &exec.turn.sub_id)
++                    .await;
++                let (activity_rx, pending_activity) = exec
++                    .session
++                    .input_queue
++                    .subscribe_activity(turn_state.as_deref())
++                    .await;
+                 telemetry.cell_id = Some(args.cell_id.clone());
+                 let cell_id = codex_code_mode::CellId::new(args.cell_id);
+                 let wait_response = if args.terminate {
+@@ -103,14 +113,30 @@ impl CodeModeWaitHandler {
+                         .terminate(cell_id)
+                         .await
+                 } else {
+-                    exec.session
+-                        .services
+-                        .code_mode_service
+-                        .wait(codex_code_mode::WaitRequest {
+-                            cell_id,
+-                            yield_time_ms: args.yield_time_ms,
+-                        })
+-                        .await
++                    loop {
++                        if event_driven && (pending_activity.is_some() || activity_rx.has_changed().unwrap_or(true)) {
++                            telemetry.finish(/*success*/ true);
++                            return Ok(boxed_tool_output(FunctionToolOutput::from_text(
++                                "Wait interrupted by new input or agent activity. The cell is still running; wait again to collect its output.".to_string(),
++                                /*success*/ Some(true),
++                            )));
++                        }
++                        let response = exec.session.services.code_mode_service.wait(codex_code_mode::WaitRequest {
++                            cell_id: cell_id.clone(),
++                            yield_time_ms: args.yield_time_ms.unwrap_or(DEFAULT_WAIT_YIELD_TIME_MS),
++                        }).await;
++                        let empty_yield = matches!(&response, Ok(codex_code_mode::WaitOutcome::LiveCell(
++                            codex_code_mode::RuntimeResponse::Yielded { content_items, .. }
++                        )) if content_items.is_empty());
++                        if !event_driven || !empty_yield {
++                            break response;
++                        }
++                        if let Ok(response) = &response
++                            && let Some(duration) = response.code_mode_host_duration()
++                        {
++                            telemetry.record_code_mode_host_duration(duration);
++                        }
++                    }
+                 }
+                 .map_err(|error| {
+                     telemetry.finish(/*success*/ false);
+@@ -157,9 +183,13 @@ impl CodeModeWaitHandler {
+                     telemetry.record_code_mode_host_duration(code_mode_host_duration);
+                 }
+                 exec.session.services.elicitations.wait_until_clear().await;
+-                let wall_time = wait_response
+-                    .code_mode_host_duration()
+-                    .unwrap_or_else(|| started_at.elapsed());
++                let wall_time = if event_driven {
++                    started_at.elapsed()
++                } else {
++                    wait_response
++                        .code_mode_host_duration()
++                        .unwrap_or_else(|| started_at.elapsed())
++                };
+                 handle_runtime_response(&exec, wait_response.into(), args.max_tokens, wall_time)
+                     .await
+                     .map_err(FunctionCallError::RespondToModel)
+diff --git a/codex-rs/core/src/tools/code_mode/wait_spec.rs b/codex-rs/core/src/tools/code_mode/wait_spec.rs
+index 72bb090..74d77eb 100644
+--- a/codex-rs/core/src/tools/code_mode/wait_spec.rs
++++ b/codex-rs/core/src/tools/code_mode/wait_spec.rs
+@@ -12,7 +12,7 @@ pub(crate) fn create_wait_tool() -> ToolSpec {
+         (
+             "yield_time_ms".to_string(),
+             JsonSchema::number(Some(
+-                "Wait before yielding more output. Defaults to 10000 ms.".to_string(),
++                "Wait before yielding more output. Defaults to 10000 ms. With event-driven waiting enabled, omit this value to stay in the runtime until output, completion, or new input; an explicit value preserves timed yielding.".to_string(),
+             )),
+         ),
+         (
+@@ -90,7 +90,7 @@ mod tests {
+                         (
+                             "yield_time_ms".to_string(),
+                             JsonSchema::number(Some(
+-                                "Wait before yielding more output. Defaults to 10000 ms."
++                                "Wait before yielding more output. Defaults to 10000 ms. With event-driven waiting enabled, omit this value to stay in the runtime until output, completion, or new input; an explicit value preserves timed yielding."
+                                     .to_string(),
+                             )),
+                         ),
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
+index 8d9d48e..c9d37d1 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_spec.rs
+@@ -280,7 +280,7 @@ pub fn create_wait_agent_tool_v1(options: WaitAgentTimeoutOptions) -> ToolSpec {
+ pub fn create_wait_agent_tool_v2(options: WaitAgentTimeoutOptions) -> ToolSpec {
+     ToolSpec::Function(ResponsesApiTool {
+         name: "wait_agent".to_string(),
+-        description: "Wait for a mailbox update from any live agent, including queued messages and final-status notifications. The wait also ends early when new user input is steered into the active turn. Does not return the content; returns either a summary of which agents have updates (if any), an interruption summary for steered input, or a timeout summary if no activity arrives before the deadline."
++        description: "Wait for a mailbox update from any live agent, including queued messages and final-status notifications. The wait also ends early when new user input is steered into the active turn. Does not return the content; returns either a summary of which agents have updates (if any), an interruption summary for steered input, or a timeout summary if no activity arrives before the deadline. With event-driven waiting enabled, omit timeout_ms when only waiting for agent progress: the runtime stays pending until mailbox activity or new user input. Explicit deadlines remain bounded waits."
+             .to_string(),
+         strict: false,
+         defer_loading: None,
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
+index f9c7b48..6232bf6 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_tests.rs
+@@ -77,6 +77,9 @@ use tokio::sync::Mutex;
+ use tokio::time::timeout;
+ use tokio_util::sync::CancellationToken;
+ 
++#[path = "multi_agents_v2/wait_event_tests.rs"]
++mod wait_event_tests;
++
+ fn invocation(
+     session: Arc<crate::session::session::Session>,
+     turn: Arc<TurnContext>,
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs
+index d2f92fe..25df8b1 100644
+--- a/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs
++++ b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait.rs
+@@ -2,12 +2,17 @@ use super::*;
+ use crate::session::InputQueueActivity;
+ use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
+ use crate::tools::handlers::multi_agents_spec::create_wait_agent_tool_v2;
++use codex_features::Feature;
+ use codex_tools::ToolSpec;
+ use std::collections::HashMap;
+ use std::time::Duration;
+ use tokio::time::Instant;
+ use tokio::time::timeout_at;
+ 
++#[cfg(test)]
++#[path = "wait_activity_tests.rs"]
++mod tests;
++
+ #[derive(Default)]
+ pub(crate) struct Handler {
+     options: WaitAgentTimeoutOptions,
+@@ -91,7 +96,13 @@ impl Handler {
+             )
+             .await;
+ 
+-        let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
++        let deadline = if requested_timeout_ms.is_none()
++            && turn.config.features.enabled(Feature::EventDrivenWait)
++        {
++            WaitDeadline::UntilActivity
++        } else {
++            WaitDeadline::At(Instant::now() + Duration::from_millis(timeout_ms as u64))
++        };
+         let outcome = wait_for_activity(&mut activity_rx, pending_activity, deadline).await;
+         let result = WaitAgentResult::from_outcome(outcome, requested_timeout_ms, timeout_ms);
+ 
+@@ -184,10 +195,15 @@ enum WaitOutcome {
+     TimedOut,
+ }
+ 
++enum WaitDeadline {
++    At(Instant),
++    UntilActivity,
++}
++
+ async fn wait_for_activity(
+     activity_rx: &mut tokio::sync::watch::Receiver<InputQueueActivity>,
+     pending_activity: Option<InputQueueActivity>,
+-    deadline: Instant,
++    deadline: WaitDeadline,
+ ) -> WaitOutcome {
+     if let Some(activity) = pending_activity {
+         return match activity {
+@@ -195,7 +211,11 @@ async fn wait_for_activity(
+             InputQueueActivity::Steer => WaitOutcome::Steered,
+         };
+     }
+-    match timeout_at(deadline, activity_rx.changed()).await {
++    let activity = match deadline {
++        WaitDeadline::At(deadline) => timeout_at(deadline, activity_rx.changed()).await,
++        WaitDeadline::UntilActivity => Ok(activity_rx.changed().await),
++    };
++    match activity {
+         Ok(Ok(())) => match *activity_rx.borrow_and_update() {
+             InputQueueActivity::Mailbox => WaitOutcome::MailboxActivity,
+             InputQueueActivity::Steer => WaitOutcome::Steered,
+diff --git a/codex-rs/core/tests/suite/code_mode.rs b/codex-rs/core/tests/suite/code_mode.rs
+index b7c6b3c..56dda90 100644
+--- a/codex-rs/core/tests/suite/code_mode.rs
++++ b/codex-rs/core/tests/suite/code_mode.rs
+@@ -1,5 +1,8 @@
+ #![allow(clippy::unwrap_used)]
+ 
++#[path = "code_mode/event_wait.rs"]
++mod event_wait;
++
+ use anyhow::Result;
+ use base64::Engine;
+ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+diff --git a/codex-rs/core/tests/suite/reasoning_effort_override.rs b/codex-rs/core/tests/suite/reasoning_effort_override.rs
+index 8fa7be8..7ed7215 100644
+--- a/codex-rs/core/tests/suite/reasoning_effort_override.rs
++++ b/codex-rs/core/tests/suite/reasoning_effort_override.rs
+@@ -16,7 +16,7 @@ use test_case::test_case;
+ 
+ fn override_builder() -> TestCodexBuilder {
+     test_codex()
+-        .with_model_info_override("gpt-5.4", |model| {
++        .with_model_info_override("gpt-6-astra", |model| {
+             model.use_responses_lite = true;
+         })
+         .with_config(|config| {
+@@ -160,12 +160,7 @@ async fn reasoning_effort_override_preserves_prefix_and_only_appends_on_change()
+             .iter()
+             .map(|request| request.body_json()["reasoning"]["effort"].clone())
+             .collect::<Vec<_>>(),
+-        vec![
+-            Value::from("medium"),
+-            Value::from("high"),
+-            Value::from("high"),
+-            Value::from("low"),
+-        ],
++        vec![Value::from("medium"); 4],
+     );
+     let cache_keys = requests
+         .iter()
+@@ -215,7 +210,7 @@ async fn reasoning_effort_override_normalizes_ultra_before_comparing_updates(
+     .await;
+     let model_effort = resolved_effort.clone();
+     let test = override_builder()
+-        .with_model_info_override("gpt-5.4", move |model| {
++        .with_model_info_override("gpt-6-astra", move |model| {
+             model.multi_agent_reasoning_effort = Some(model_effort.clone());
+             model.supported_reasoning_levels = vec![ReasoningEffortPreset {
+                 effort: model_effort,
+@@ -258,11 +253,13 @@ enum OverrideUnavailable {
+     FeatureDisabled,
+     NonOpenAiProvider,
+     ResponsesLiteDisabled,
++    UnsupportedModel,
+ }
+ 
+ #[test_case(OverrideUnavailable::FeatureDisabled; "feature disabled")]
+ #[test_case(OverrideUnavailable::NonOpenAiProvider; "unsupported provider")]
+ #[test_case(OverrideUnavailable::ResponsesLiteDisabled; "responses lite disabled")]
++#[test_case(OverrideUnavailable::UnsupportedModel; "unsupported model")]
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn reasoning_effort_override_unavailable_uses_request_effort(
+     unavailable: OverrideUnavailable,
+@@ -290,7 +287,9 @@ async fn reasoning_effort_override_unavailable_uses_request_effort(
+             config.model_provider.name = "unsupported provider".into();
+         }),
+         OverrideUnavailable::ResponsesLiteDisabled => override_builder()
+-            .with_model_info_override("gpt-5.4", |model| model.use_responses_lite = false),
++            .with_model_info_override("gpt-6-astra", |model| model.use_responses_lite = false),
++        OverrideUnavailable::UnsupportedModel => override_builder()
++            .with_model_info_override("gpt-5.4", |model| model.use_responses_lite = true),
+     };
+     let test = builder.build_with_auto_env(&server).await?;
+     test.submit_text_turn("first").await?;
+@@ -314,3 +313,92 @@ async fn reasoning_effort_override_unavailable_uses_request_effort(
+     );
+     Ok(())
+ }
++
++#[derive(Clone, Copy)]
++enum Continuation {
++    Resume,
++    Fork,
++}
++
++#[test_case(Continuation::Resume; "resume")]
++#[test_case(Continuation::Fork; "fork")]
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn reasoning_effort_override_continuation_keeps_original_request_effort(
++    continuation: Continuation,
++) -> anyhow::Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let mut mocks = Vec::new();
++    for id in ["initial", "changed", "resumed"] {
++        mocks.push(
++            responses::mount_sse_once(&server, responses::sse(vec![responses::ev_completed(id)]))
++                .await,
++        );
++    }
++    let mut builder = override_builder();
++    let test = builder.build_with_auto_env(&server).await?;
++    test.submit_text_turn("initial message").await?;
++    submit_thread_settings(
++        &test.codex,
++        ThreadSettingsOverrides {
++            effort: Some(Some(ReasoningEffort::High)),
++            ..Default::default()
++        },
++    )
++    .await?;
++    test.submit_text_turn("higher effort").await?;
++    let continued = match continuation {
++        Continuation::Resume => {
++            override_builder()
++                .with_config(|config| config.model_reasoning_effort = Some(ReasoningEffort::High))
++                .restart(&server, &test)
++                .await?
++                .codex
++        }
++        Continuation::Fork => {
++            let mut config = test.config.clone();
++            config.model_reasoning_effort = Some(ReasoningEffort::High);
++            test.thread_manager
++                .fork_thread(
++                    codex_core::ForkSnapshot::TruncateBeforeNthUserMessage(2),
++                    config,
++                    test.codex.rollout_path().expect("rollout path"),
++                    /*thread_source*/ None,
++                    /*parent_trace*/ None,
++                )
++                .await?
++                .thread
++        }
++    };
++    continued
++        .start_or_steer_turn(codex_core::TurnInputRequest::user_input(vec![
++            codex_protocol::user_input::UserInput::Text {
++                text: "continue".into(),
++                text_elements: Vec::new(),
++            },
++        ]))
++        .await?;
++    core_test_support::wait_for_event(&continued, |event| {
++        matches!(event, codex_protocol::protocol::EventMsg::TurnComplete(_))
++    })
++    .await;
++    let requests = mocks
++        .iter()
++        .map(responses::ResponseMock::single_request)
++        .collect::<Vec<_>>();
++    assert_eq!(
++        requests
++            .iter()
++            .map(|r| r.body_json()["reasoning"]["effort"].clone())
++            .collect::<Vec<_>>(),
++        vec![Value::from("medium"); 3]
++    );
++    assert_eq!(
++        effort_updates(&requests[2]),
++        vec![
++            effort_update(ReasoningEffort::Medium),
++            effort_update(ReasoningEffort::High)
++        ]
++    );
++    Ok(())
++}
+diff --git a/codex-rs/features/src/lib.rs b/codex-rs/features/src/lib.rs
+index 5b52060..782f632 100644
+--- a/codex-rs/features/src/lib.rs
++++ b/codex-rs/features/src/lib.rs
+@@ -326,6 +326,8 @@ pub enum Feature {
+     RolloutBudget,
+     /// Append trusted response configuration items when the selected reasoning effort changes.
+     ReasoningEffortOverride,
++    /// Keep waits without explicit deadlines inside the runtime until activity arrives.
++    EventDrivenWait,
+     /// Add current-time reminders to model-visible context.
+     CurrentTimeReminder,
+     /// Route MCP tool approval prompts through the MCP elicitation request path.
+@@ -1615,6 +1617,12 @@ pub const FEATURES: &[FeatureSpec] = &[
+         stage: Stage::UnderDevelopment,
+         default_enabled: false,
+     },
++    FeatureSpec {
++        id: Feature::EventDrivenWait,
++        key: "event_driven_wait",
++        stage: Stage::UnderDevelopment,
++        default_enabled: false,
++    },
+     FeatureSpec {
+         id: Feature::CurrentTimeReminder,
+         key: "current_time_reminder",
+diff --git a/codex-rs/core/src/session/reasoning_effort_tests.rs b/codex-rs/core/src/session/reasoning_effort_tests.rs
+new file mode 100644
+index 0000000..5089d18
+--- /dev/null
++++ b/codex-rs/core/src/session/reasoning_effort_tests.rs
+@@ -0,0 +1,77 @@
++use crate::context_manager::HistoryReplacement;
++use crate::session::step_context::StepContext;
++use crate::session::tests::make_session_and_context_with_auth_and_config_and_rx;
++use codex_features::Feature;
++use codex_history::CodexHarnessMetadata;
++use codex_history::ResponseItemEnvelope;
++use codex_login::CodexAuth;
++use codex_protocol::models::ConfigurationReasoning;
++use codex_protocol::models::ResponseItem;
++use codex_protocol::openai_models::ReasoningEffort;
++use pretty_assertions::assert_eq;
++use std::sync::Arc;
++
++#[tokio::test]
++async fn request_effort_follows_trusted_surviving_history_after_compaction() {
++    let (session, turn, _) = make_session_and_context_with_auth_and_config_and_rx(
++        CodexAuth::from_api_key("test"),
++        Vec::new(),
++        |config| {
++            config
++                .features
++                .enable(Feature::ReasoningEffortOverride)
++                .unwrap();
++            config.model = Some("gpt-6-astra".into());
++            config.model_catalog = Some(codex_models_manager::bundled_models_response().unwrap());
++            config.model_reasoning_effort = Some(ReasoningEffort::High);
++        },
++    )
++    .await;
++    let settings = StepContext::for_test(Arc::clone(&turn)).settings.clone();
++    let trusted = |effort| ResponseItemEnvelope {
++        item: ResponseItem::ConfigurationUpdate {
++            reasoning: ConfigurationReasoning { effort },
++        },
++        metadata: Some(CodexHarnessMetadata {
++            harness_authored_configuration: true,
++            ..Default::default()
++        }),
++    };
++    let untrusted = ResponseItemEnvelope::new(ResponseItem::ConfigurationUpdate {
++        reasoning: ConfigurationReasoning {
++            effort: ReasoningEffort::Low,
++        },
++    });
++    session
++        .record_annotated_conversation_items(
++            &turn,
++            vec![
++                untrusted,
++                trusted(ReasoningEffort::Medium),
++                trusted(ReasoningEffort::High),
++            ],
++        )
++        .await;
++    assert_eq!(
++        session.request_reasoning_effort(&settings).await,
++        Some(ReasoningEffort::Medium)
++    );
++    session.state.lock().await.replace_annotated_history(
++        vec![trusted(ReasoningEffort::High)],
++        None,
++        HistoryReplacement::Compaction,
++    );
++    assert_eq!(
++        session.request_reasoning_effort(&settings).await,
++        Some(ReasoningEffort::High)
++    );
++    session.state.lock().await.replace_annotated_history(
++        Vec::new(),
++        None,
++        HistoryReplacement::Reset,
++    );
++    assert_eq!(
++        session.request_reasoning_effort(&settings).await,
++        Some(ReasoningEffort::High)
++    );
++}
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_v2/wait_activity_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait_activity_tests.rs
+new file mode 100644
+index 0000000..4cb5858
+--- /dev/null
++++ b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait_activity_tests.rs
+@@ -0,0 +1,36 @@
++use super::*;
++use pretty_assertions::assert_eq;
++
++#[tokio::test]
++async fn event_driven_wait_wakes_on_user_steering() {
++    let (sender, mut receiver) = tokio::sync::watch::channel(InputQueueActivity::Mailbox);
++    let wait = wait_for_activity(&mut receiver, None, WaitDeadline::UntilActivity);
++    tokio::pin!(wait);
++    assert!(
++        tokio::time::timeout(Duration::from_millis(20), &mut wait)
++            .await
++            .is_err()
++    );
++    sender.send_replace(InputQueueActivity::Steer);
++    assert_eq!(
++        tokio::time::timeout(Duration::from_secs(1), wait)
++            .await
++            .unwrap(),
++        WaitOutcome::Steered
++    );
++}
++
++#[tokio::test]
++async fn event_driven_wait_does_not_hang_when_activity_channel_closes() {
++    let (sender, mut receiver) = tokio::sync::watch::channel(InputQueueActivity::Mailbox);
++    drop(sender);
++    assert_eq!(
++        tokio::time::timeout(
++            Duration::from_secs(1),
++            wait_for_activity(&mut receiver, None, WaitDeadline::UntilActivity)
++        )
++        .await
++        .unwrap(),
++        WaitOutcome::TimedOut
++    );
++}
+diff --git a/codex-rs/core/src/tools/handlers/multi_agents_v2/wait_event_tests.rs b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait_event_tests.rs
+new file mode 100644
+index 0000000..52deb55
+--- /dev/null
++++ b/codex-rs/core/src/tools/handlers/multi_agents_v2/wait_event_tests.rs
+@@ -0,0 +1,78 @@
++use super::*;
++use pretty_assertions::assert_eq;
++
++#[tokio::test]
++async fn event_driven_wait_stays_pending_until_mailbox_activity() {
++    let (session, mut turn) = make_session_and_context().await;
++    let mut config = (*turn.config).clone();
++    config
++        .features
++        .enable(Feature::EventDrivenWait)
++        .expect("enable event waits");
++    config.multi_agent_v2.default_wait_timeout_ms = 1;
++    set_turn_config(&mut turn, config);
++    let session = Arc::new(session);
++    let turn = Arc::new(turn);
++    let handler = WaitAgentHandlerV2::default();
++    let wait = handler.handle(invocation(
++        session.clone(),
++        turn,
++        "wait_agent",
++        function_payload(json!({})),
++    ));
++    tokio::pin!(wait);
++    assert!(
++        timeout(Duration::from_millis(20), &mut wait).await.is_err(),
++        "an idle default timeout must not return control to the model"
++    );
++    session
++        .input_queue
++        .enqueue_mailbox_communication(
++            InterAgentCommunication::new(
++                AgentPath::root(),
++                AgentPath::root(),
++                Vec::new(),
++                "worker completed".to_string(),
++                /*trigger_turn*/ false,
++            ),
++            Default::default(),
++        )
++        .await;
++    let output = timeout(Duration::from_secs(1), &mut wait)
++        .await
++        .expect("mailbox should wake wait")
++        .expect("wait succeeds");
++    let (content, _) = expect_text_output(output);
++    let result: crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult =
++        serde_json::from_str(&content).unwrap();
++    assert!(!result.timed_out);
++    assert_eq!(result.message, "Wait completed.");
++}
++
++#[tokio::test]
++async fn event_driven_wait_preserves_explicit_timeouts() {
++    let (session, mut turn) = make_session_and_context().await;
++    let mut config = (*turn.config).clone();
++    config
++        .features
++        .enable(Feature::EventDrivenWait)
++        .expect("enable event waits");
++    config.multi_agent_v2.min_wait_timeout_ms = 1;
++    set_turn_config(&mut turn, config);
++    let output = timeout(
++        Duration::from_secs(1),
++        WaitAgentHandlerV2::default().handle(invocation(
++            Arc::new(session),
++            Arc::new(turn),
++            "wait_agent",
++            function_payload(json!({"timeout_ms": 1})),
++        )),
++    )
++    .await
++    .expect("explicit deadline should still expire")
++    .expect("wait succeeds");
++    let (content, _) = expect_text_output(output);
++    let result: crate::tools::handlers::multi_agents_v2::wait::WaitAgentResult =
++        serde_json::from_str(&content).unwrap();
++    assert!(result.timed_out);
++}
+diff --git a/codex-rs/core/tests/suite/code_mode/event_wait.rs b/codex-rs/core/tests/suite/code_mode/event_wait.rs
+new file mode 100644
+index 0000000..1013398
+--- /dev/null
++++ b/codex-rs/core/tests/suite/code_mode/event_wait.rs
+@@ -0,0 +1,52 @@
++use super::*;
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn code_mode_event_wait_does_not_return_empty_timer_yields() -> Result<()> {
++    skip_if_no_network!(Ok(()));
++    let server = responses::start_mock_server().await;
++    let code = "// @exec: {\"yield_time_ms\": 1}\nawait new Promise(resolve => setTimeout(resolve, 12000)); text('ready');";
++    let (test, started) = run_code_mode_turn_with_config(&server, "start work", code, |config| {
++        config.features.enable(Feature::EventDrivenWait).unwrap();
++    })
++    .await?;
++    let first_request = started.single_request();
++    let first_items = custom_tool_output_items(&first_request, "call-1");
++    assert!(
++        text_item(&first_items, /*index*/ 0).starts_with("Script running with cell ID "),
++        "initial cell output: {first_items:?}"
++    );
++    let cell_id = extract_running_cell_id(text_item(&first_items, /*index*/ 0));
++    responses::mount_sse_once(
++        &server,
++        sse(vec![
++            responses::ev_function_call(
++                "call-wait",
++                "wait",
++                &serde_json::json!({"cell_id": cell_id}).to_string(),
++            ),
++            ev_completed("waiting"),
++        ]),
++    )
++    .await;
++    let completed = responses::mount_sse_once(
++        &server,
++        sse(vec![
++            ev_assistant_message("done", "done"),
++            ev_completed("completed"),
++        ]),
++    )
++    .await;
++    test.submit_turn("wait for the result").await?;
++    let request = completed.single_request();
++    let items = function_tool_output_items(&request, "call-wait");
++    assert!(
++        text_item(&items, /*index*/ 0).contains("Script completed"),
++        "an empty timer yield must stay in the runtime rather than start another model request"
++    );
++    assert!(
++        items
++            .iter()
++            .any(|item| item.get("text").and_then(Value::as_str) == Some("ready"))
++    );
++    Ok(())
++}

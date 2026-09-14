@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+/validation-output/
+/runtime/
+/upstream/
+/build/
+/target/
+*.log
+*.db
+*.sqlite*
+.env
+.env.*

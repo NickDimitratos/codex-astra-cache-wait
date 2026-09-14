@@ -1,0 +1,24 @@
+name: Patch toolkit checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Guard, manager, and plugin packaging tests
+        run: python -m unittest discover -s tests -v
+      - name: Check the patch against its exact upstream revision
+        run: |
+          git clone --depth 1 --branch rust-v0.154.0-alpha.6.2 https://github.com/openai/codex.git upstream
+          python scripts/patch_guard.py check upstream
+          python scripts/patch_guard.py apply upstream
+          git -C upstream apply --check --reverse ../patches/astra-cache-and-idle-wait.patch

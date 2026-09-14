@@ -1,0 +1,4 @@
+# Unified-diff blank context lines contain a required leading space.
+# Check whitespace on the applied upstream source, not this patch container.
+patches/*.patch -whitespace
+plugins/astra-runtime-manager/resources/patches/*.patch -whitespace

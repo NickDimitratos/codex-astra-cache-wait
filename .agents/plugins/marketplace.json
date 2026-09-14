@@ -1,0 +1,20 @@
+{
+  "name": "astra-runtime",
+  "interface": {
+    "displayName": "Astra Runtime"
+  },
+  "plugins": [
+    {
+      "name": "astra-runtime-manager",
+      "source": {
+        "source": "local",
+        "path": "./plugins/astra-runtime-manager"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
