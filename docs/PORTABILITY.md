@@ -87,6 +87,8 @@ The Python launcher forwards arguments without a shell and preserves model/effor
 
 Disable makes the next launcher invocation use the original CLI. The launcher also falls back if the original CLI version changes. Close active patched CLI sessions before removal. A standalone setup does not change a desktop app's runtime.
 
+After updating to plugin 0.3.2, run `enable` again for the same managed root to refresh its launcher without rebuilding. Both desktop and standalone wrappers verify ownership and runtime file hashes on each enabled launch and warn before falling back to the original CLI if verification fails. See [the community update and recovery notes](COMMUNITY.md#update-the-plugin).
+
 For usage comparison, replace the after-run command in [MEASUREMENTS.md](MEASUREMENTS.md) with `python3 /actual/managed/path/codex-patched.py exec --json "Your agreed benchmark task"`. Verify enablement and the matching original CLI first; a fallback run is not a patched benchmark.
 
 ## Validation scope

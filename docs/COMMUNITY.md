@@ -167,6 +167,12 @@ Start a new task/session. Updating the plugin refreshes tools and documentation;
 
 For an existing desktop runtime, ask the updated plugin to enable it again to refresh its generated launchers. Version 0.3.1 fixes a false "Codex is running" message caused by crash-reporting helpers that survive after quitting. This refresh verifies and preserves the installed runtime and its receipt; a desktop restart through the launcher is still required.
 
+Version **0.3.2** refreshes both desktop and standalone launchers when enabling an existing runtime. After upgrading the plugin, ask: **“Enable my existing managed runtime again to refresh its launchers; keep my active tasks running.”** Then use the refreshed launcher for the next session. This does not rebuild the Rust package or change the current session.
+
+The refreshed launchers check ownership and all recorded runtime file hashes before selecting the patch. A failed check produces a warning and uses the original CLI; recheck status before measuring usage. Verification adds local disk/CPU work per launch and makes no model calls. It detects changes against a local receipt; it does not authenticate downloaded binaries or prevent an attacker with control of that receipt from changing it. Desktop wrappers use the Python interpreter that generated them; if that interpreter is removed, regenerate the launchers with an available Python.
+
+Setup now stages validation results, launchers, and the receipt before promoting the runtime. Caught promotion failures roll back completed steps so setup can be retried. Resolve the reported write error, then retry; a retained trusted package can be imported again. Power loss, forced termination, or rollback failure can still require inspection of the reported staging directory. Preserve unexpected files before recovery. Existing partial installations from older versions also require inspection before retrying.
+
 After a Codex app update, run the diagnostic again. A matching tested catalog entry and runtime build are required. An older runtime cannot be enabled against a newer app, even if the catalog later adds support. Unsupported releases are not downgraded or forcibly patched.
 
 ### Temporarily use normal Codex

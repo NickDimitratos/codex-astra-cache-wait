@@ -32,6 +32,8 @@ python3 plugins/astra-runtime-manager/scripts/usage_report.py compare before.jso
 
 The native adapter reads `thread.started`, `turn.started`, `turn.completed`, and `turn.failed`. It keeps one final cumulative value per thread, including across concatenated captures of the same thread. It counts **threads**, not model requests. Repeated terminal events are ignored until another turn begins. Missing usage is unknown. Decreasing counters fail explicitly rather than guessing how to combine incompatible data. Resumed totals can include prior usage. Native events do not support trustworthy arbitrary time-window filtering.
 
+If a later terminal event has no usable counters, the report retains the last known cumulative total as a **lower bound** and increments `samples_with_partial_usage`. A later valid cumulative total replaces that bound without double counting. `failed_samples` counts native threads containing an observed failed turn, even if they later recover. Token deltas remain unknown when either report includes a partial cumulative total.
+
 See [RELEASES.md](RELEASES.md) for the checked schemas. An unknown output layout is not silently reported as zero.
 
 ## Optional OpenCodex request logs
@@ -43,6 +45,8 @@ python3 plugins/astra-runtime-manager/scripts/usage_report.py summarize /path/to
 Choose your actual start/end and a comparable after window. Start is inclusive; end is exclusive. Requests are deduplicated by request ID before aggregation. Attempt usage is not added again. Unclassified records remain separate. Retry counts are unknown when attempts are not recorded.
 
 Reports expose token totals, model/effort grouping when available, failures, retry counts, and coverage. Failed requests without usage stay outside measured-token calculations. Cache ratio and fresh input per sample use the same subset with valid cache data. Missing reasoning fields do not mean zero reasoning.
+
+Input/output differences and percentages are null when either report has no valid token measurements. An explicitly measured zero remains a known value. The model/effort warning compares sample proportions: a change from 90% Astra to 10% Astra is flagged even if both reports contain the same models; proportional growth in sample counts alone is not flagged as a mix change.
 
 ## Interpreting the comparison
 

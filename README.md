@@ -82,6 +82,8 @@ The previously validated desktop path requires the matching app version, Apple S
 
 To update this GitHub installation, run `codex plugin marketplace upgrade astra-runtime`, then `codex plugin add astra-runtime-manager@astra-runtime`, and start a new task/session. Updating the plugin does not silently replace a separately installed runtime.
 
+Version **0.3.2** corrects usage aggregation/comparisons and strengthens file preservation, launcher verification, and setup recovery. After updating, ask the plugin to **enable the existing runtime again** to refresh both desktop and standalone launchers. This reuses the validated runtime; no Rust rebuild is needed. See [the update steps](docs/COMMUNITY.md#update-the-plugin).
+
 To undo setup, ask “Restore normal Codex and remove the managed runtime.” Remove the managed runtime **before** uninstalling the plugin. Codex's plugin toggle and Uninstall button manage the plugin bundle; they do not undo an external runtime installation. Read the [plugin guide](plugins/astra-runtime-manager/README.md) for its status, enable, disable, and removal controls.
 
 ## Apply the source patch manually

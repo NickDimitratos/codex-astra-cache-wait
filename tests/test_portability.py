@@ -69,7 +69,7 @@ class PortabilityTests(unittest.TestCase):
     def test_launcher_forwards_literal_arguments_and_falls_back_after_upgrade(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / 'managed space'
-            root.mkdir()
+            manager.claim_root(root)
             original = Path(temporary) / 'original.py'
             binary = root / 'runtime/bin/codex.py'
             binary.parent.mkdir(parents=True)
@@ -81,7 +81,7 @@ class PortabilityTests(unittest.TestCase):
                              'features': ['reasoning_effort_override', 'event_driven_wait']}
             manager.write_portable_launcher(root, launcher_spec)
             (root / 'enabled').write_text('enabled')
-            (root / 'receipt.json').write_text('{}')
+            (root / 'receipt.json').write_text(json.dumps({'files_sha256': manager.hash_tree(root / 'runtime')}))
             args = ['exec', 'spaces and "quotes" & $HOME', '--json']
             command = [sys.executable, str(root / 'codex-patched.py')] + args
             result = subprocess.run(command, capture_output=True, text=True, check=True)

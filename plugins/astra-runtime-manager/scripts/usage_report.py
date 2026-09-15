@@ -81,14 +81,15 @@ def read_events(path, format_name, start=None, end=None):
                     continue
                 active_turn = False
                 current_usage = usage_values(row.get("usage"))
-                prior = native_threads.get(native_thread, {}).get("usage")
+                previous = native_threads.get(native_thread, {})
+                prior = previous.get("usage")
                 if prior and current_usage and any(current_usage[k] < prior[k] for k in ("input", "output")):
                     raise ValueError("Native thread totals decreased; use fresh thread captures or a matching format adapter")
                 native_threads[native_thread] = {"model": "unspecified", "effort": "unspecified",
-                               "usage": current_usage,
-                               "error": kind == "turn.failed", "extra_sends": None,
-                               "cache_missing": isinstance(row.get("usage"), dict)
-                               and "cached_input_tokens" not in row["usage"]}
+                               "usage": current_usage or prior,
+                               "usage_is_lower_bound": current_usage is None and prior is not None,
+                               "error": previous.get("error", False) or kind == "turn.failed",
+                               "extra_sends": None}
                 quality["native_terminal_events"] += 1
             elif kind == "error":
                 quality["stream_error_events"] += 1  # May duplicate turn.failed; no extra request inferred.
@@ -139,6 +140,7 @@ def summarize(events):
         else:
             counts["extra_sends_reported"] += event["extra_sends"]
         usage = event["usage"]
+        counts["samples_with_partial_usage"] += event.get("usage_is_lower_bound", False)
         if usage is None:
             counts["samples_without_valid_usage"] += 1
             continue
@@ -154,7 +156,7 @@ def summarize(events):
             counts["samples_with_reasoning_usage"] += 1
             counts["reasoning_tokens_subset_of_output"] += usage["reasoning"]
     keys = ("samples", "failed_samples", "samples_without_status", "samples_without_retry_data", "extra_sends_reported",
-            "samples_without_valid_usage", "samples_with_usage", "input_tokens_reported",
+            "samples_without_valid_usage", "samples_with_usage", "samples_with_partial_usage", "input_tokens_reported",
             "output_tokens_reported", "samples_with_cache_usage", "input_tokens_with_cache_usage",
             "cached_input_tokens_reported", "fresh_input_tokens_reported", "samples_with_reasoning_usage",
             "reasoning_tokens_subset_of_output")
@@ -182,6 +184,7 @@ def report(path, format_name, start=None, end=None):
             "causal_savings_percent": None,
             "notes": ["Only numeric aggregates and restricted model/effort names are exported.",
                       "Missing usage is unknown, not zero. Cache and reasoning coverage are explicit.",
+                      "Partial native usage retains the last known cumulative lower bound; later unmeasured usage is unknown.",
                       "Reasoning is included in output; cached input is included in input.",
                       "Codex exec totals are cumulative per thread; resumed threads may include earlier usage. Use fresh threads for benchmarks.",
                       "Token totals cannot establish account allowance or monetary savings."]}
@@ -197,6 +200,10 @@ def compare(before, after):
                 "fresh_input_per_cache_reported_sample", "cache_percent_reported_subset"):
         a, b = before["totals"][key], after["totals"][key]
         known = a is not None and b is not None
+        if key != "samples":
+            known = known and all(item["totals"]["samples_with_usage"] > 0 and
+                                  not item["totals"].get("samples_with_partial_usage", 0)
+                                  for item in (before, after))
         if key == "fresh_input_tokens_reported":
             known = known and all(item["totals"]["samples_with_cache_usage"] > 0 for item in (before, after))
         changes[key] = {"before": a, "after": b,
@@ -204,11 +211,20 @@ def compare(before, after):
                         "relative_change_percent": 100 * (b - a) / a if known and a else None}
     notes = ["Observed changes only. These reports do not verify activation, equivalent tasks, or answer quality.",
              "Use comparable task sets, model, effort, concurrency, and context size; record runtime evidence separately."]
-    if before["effort_samples"] != after["effort_samples"] or set(before["by_model"]) != set(after["by_model"]):
+    def different_proportions(a, b):
+        total_a, total_b = sum(a.values()), sum(b.values())
+        return set(a) != set(b) or any(a[key] * total_b != b[key] * total_a for key in a)
+
+    if (different_proportions(before["effort_samples"], after["effort_samples"]) or
+            different_proportions({model: group["samples"] for model, group in before["by_model"].items()},
+                                  {model: group["samples"] for model, group in after["by_model"].items()})):
         notes.append("Model or effort sample mix differs; aggregated changes are not directly comparable.")
     if any(item["totals"]["samples_without_valid_usage"] or
+           item["totals"].get("samples_with_partial_usage", 0) or
            item["totals"]["samples_with_cache_usage"] != item["totals"]["samples"] for item in (before, after)):
         notes.append("Usage coverage is incomplete; some token comparisons cover reported subsets only.")
+    if any(item["totals"].get("samples_with_partial_usage", 0) for item in (before, after)):
+        notes.append("Native totals include lower bounds; token deltas are unknown until complete cumulative usage is available.")
     return {"schema_version": 1, "sample_unit": before["sample_unit"], "observed_changes": changes,
             "causal_savings_percent": None, "account_allowance_savings_percent": None, "notes": notes}
 
