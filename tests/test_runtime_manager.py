@@ -1,6 +1,9 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shlex
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -136,6 +139,67 @@ class RuntimeManagerTests(unittest.TestCase):
         with patch.object(manager, "check_app", return_value=manager.SPEC["cli_version"]), patch.object(manager, "running_commands", return_value=[app_process]):
             with self.assertRaisesRegex(manager.ManagerError, "running"):
                 manager.launch(self.root)
+
+    def test_launch_ignores_only_framework_crash_reporters(self):
+        receipt = self.create_installation()
+        (self.root / "enabled").write_text("yes")
+        app = receipt["app"]
+        crashpad = app + "/Contents/Frameworks/Codex Framework.framework/Versions/152/Helpers/browser_crashpad_handler"
+        with patch.object(manager, "check_app", return_value=manager.SPEC["cli_version"]), patch.object(manager, "running_commands", return_value=[crashpad]), patch.object(manager, "run", return_value="") as launch_command:
+            self.assertTrue(manager.launch(self.root)["launch_requested"])
+            launch_command.assert_called_once_with(["open", "-a", Path(app), "--env", f"CODEX_CLI_PATH={self.root / 'codex-patched'}"])
+        blockers = [
+            app + "/Contents/MacOS/ChatGPT",
+            app + "/Contents/Resources/codex",
+            app + "/Contents/Resources/codex-code-mode-host",
+            app + "/Contents/Resources/browser_crashpad_handler",
+            app + "/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer)",
+            crashpad + ".other",
+            str(self.root / "runtime/bin/codex"),
+        ]
+        for blocker in blockers:
+            with self.subTest(blocker=blocker), patch.object(manager, "check_app", return_value=manager.SPEC["cli_version"]), patch.object(manager, "running_commands", return_value=[crashpad, blocker]), patch.object(manager, "run") as launch_command:
+                with self.assertRaisesRegex(manager.ManagerError, "running"):
+                    manager.launch(self.root)
+                launch_command.assert_not_called()
+
+    def run_desktop_launcher(self, commands):
+        # Replace only OS process discovery and app opening, then execute the real shell guard.
+        launcher = (self.root / "launch-patched.command").read_text()
+        launcher = launcher.replace("processes=$(/bin/ps -axo comm=)", "processes=" + shlex.quote("\n".join(commands)))
+        launcher = launcher.replace("exec /usr/bin/open ", "printf '%s\\n' ")
+        script = self.root / "launcher-test.command"
+        script.write_text(launcher)
+        return subprocess.run(["sh", str(script)], capture_output=True, text=True, timeout=10)
+
+    @unittest.skipIf(os.name == "nt", "Desktop shell behavior is tested on POSIX")
+    def test_shell_launcher_ignores_crash_reporters_but_blocks_active_workers(self):
+        manager.claim_root(self.root)
+        app = self.base / "Owner's Codex.app"
+        manager.create_launchers(self.root, app)
+        (self.root / "enabled").write_text("yes")
+        crashpad = str(app) + "/Contents/Frameworks/Codex Framework.framework/Versions/152/Helpers/browser_crashpad_handler"
+        result = self.run_desktop_launcher([crashpad])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["-a", str(app), "--env", f"CODEX_CLI_PATH={self.root / 'codex-patched'}"])
+        for worker in ("MacOS/ChatGPT", "Resources/codex", "Resources/codex-code-mode-host", "Resources/browser_crashpad_handler", "Frameworks/Codex Framework.framework/Helpers/Codex (Renderer)"):
+            with self.subTest(worker=worker):
+                result = self.run_desktop_launcher([crashpad, str(app) + "/Contents/" + worker])
+                self.assertEqual(result.returncode, 1)
+                self.assertNotIn("CODEX_CLI_PATH=", result.stdout)
+
+    @unittest.skipIf(os.name == "nt", "Desktop shell behavior is tested on POSIX")
+    def test_enable_refreshes_old_launcher_without_changing_runtime_or_receipt(self):
+        receipt = self.create_installation()
+        (self.root / "launch-patched.command").write_text("#!/bin/sh\nexit 1\n")
+        before = (self.root / "receipt.json").read_bytes()
+        with patch.object(manager, "check_app", return_value=manager.SPEC["cli_version"]):
+            manager.enable(self.root)
+        crashpad = receipt["app"] + "/Contents/Frameworks/Codex Framework.framework/Versions/152/Helpers/browser_crashpad_handler"
+        result = self.run_desktop_launcher([crashpad])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.root / "receipt.json").read_bytes(), before)
+        self.assertEqual(manager.hash_tree(self.root / "runtime"), receipt["files_sha256"])
 
     def test_launcher_handles_spaces_and_quotes(self):
         manager.claim_root(self.root)

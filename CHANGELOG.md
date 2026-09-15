@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Fix the macOS launcher falsely reporting an open app when only its framework crash reporters remain after quitting. App, runtime, and worker processes still block a second launch.
+- Refresh generated desktop launchers when enabling an existing validated installation, so plugin updates can repair launch behavior without rebuilding the runtime or changing its receipt.
+
 ## 0.3.0
 
 - Add standalone `setup --cli`, portable Python launchers, and preserved original-CLI fallback after updates.

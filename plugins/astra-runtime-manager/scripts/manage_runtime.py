@@ -25,6 +25,7 @@ OWNER = {"owner": "astra-runtime-manager", "schema": 1}
 PACKAGE_FILES = ("codex-package.json", "bin/codex", "bin/codex-code-mode-host",
                  "codex-path/rg", "codex-resources/zsh/bin/zsh")
 DEFAULT_ROOT = Path.home() / ".local/share/codex-astra-cache-wait"
+CRASH_REPORTER_SUFFIX = "/Helpers/browser_crashpad_handler"
 
 
 class ManagerError(Exception):
@@ -109,6 +110,19 @@ def running_commands():
 def is_active(root, commands):
     prefixes = tuple(os.path.normcase(str(path)) + os.sep for path in (root.absolute(), root.resolve()))
     return any(os.path.normcase(command.strip()).startswith(prefixes) for command in commands)
+
+
+def is_desktop_active(app, commands):
+    prefix = str(app) + "/Contents/"
+    framework = prefix + "Frameworks/Codex Framework.framework/"
+    for command in commands:
+        executable = command.strip()
+        if executable.startswith(prefix):
+            # Crash reporters can outlive the app; they cannot host active tasks.
+            if executable.startswith(framework) and executable.endswith(CRASH_REPORTER_SUFFIX):
+                continue
+            return True
+    return False
 
 
 def package_files(target):
@@ -250,7 +264,7 @@ if [ ! -f "$managed_dir/enabled" ]; then
     exit 1
 fi
 processes=$(/bin/ps -axo comm=)
-if printf '%s\\n' "$processes" | /usr/bin/awk -v app={shlex.quote(str(app) + '/Contents/')} 'index($0, app) == 1 {{ found=1 }} END {{ exit !found }}'; then
+if printf '%s\\n' "$processes" | /usr/bin/awk -v app={shlex.quote(str(app) + '/Contents/')} -v crashpad={shlex.quote(CRASH_REPORTER_SUFFIX)} 'index($0, app) == 1 && !(index($0, app "Frameworks/Codex Framework.framework/") == 1 && substr($0, length($0) - length(crashpad) + 1) == crashpad) {{ found=1 }} END {{ exit !found }}'; then
     echo "Quit Codex after active tasks finish, then run this launcher again."
     exit 1
 fi
@@ -390,6 +404,10 @@ def build_and_install(root, app=None, installation=None):
 def enable(root):
     receipt = verify_installation(root)
     check_receipt_app(receipt)
+    if receipt.get("app"):
+        release = compatibility.select_release(receipt.get("cli_version", SPEC["cli_version"]),
+                                               experimental=True, target=receipt.get("target"))
+        create_launchers(root, Path(receipt["app"]), release)
     (root / "enabled").write_text("enabled for explicit launcher\n")
     return {"enabled_for_launcher": True, "restart_required": True,
             "launcher": str(root / ("launch-patched.command" if receipt.get("app") else "codex-patched.py")),
@@ -411,7 +429,7 @@ def launch(root):
     if not (root / "enabled").is_file():
         raise ManagerError("Enable the runtime before launching it")
     commands = running_commands()
-    if is_active(root, commands) or any(command.strip().startswith(str(app) + "/Contents/") for command in commands):
+    if is_active(root, commands) or is_desktop_active(app, commands):
         raise ManagerError("Codex is running; finish active tasks and quit it before launching the patch")
     run(["open", "-a", app, "--env", f"CODEX_CLI_PATH={root / 'codex-patched'}"])
     return {"launch_requested": True, "note": "Check status after startup to confirm the actual runtime."}

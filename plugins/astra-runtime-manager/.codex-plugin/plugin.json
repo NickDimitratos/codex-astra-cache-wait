@@ -1,6 +1,6 @@
 {
   "name": "astra-runtime-manager",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Check CLI/CPU compatibility, measure usage, and manage desktop or standalone experimental Astra runtimes.",
   "author": {
     "name": "Nick Dimitratos",

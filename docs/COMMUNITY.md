@@ -165,6 +165,8 @@ codex plugin add astra-runtime-manager@astra-runtime
 
 Start a new task/session. Updating the plugin refreshes tools and documentation; it does not silently replace or activate an installed runtime.
 
+For an existing desktop runtime, ask the updated plugin to enable it again to refresh its generated launchers. Version 0.3.1 fixes a false "Codex is running" message caused by crash-reporting helpers that survive after quitting. This refresh verifies and preserves the installed runtime and its receipt; a desktop restart through the launcher is still required.
+
 After a Codex app update, run the diagnostic again. A matching tested catalog entry and runtime build are required. An older runtime cannot be enabled against a newer app, even if the catalog later adds support. Unsupported releases are not downgraded or forcibly patched.
 
 ### Temporarily use normal Codex
@@ -190,7 +192,7 @@ Removal refuses to delete a running runtime, proceed with unknown process status
 | No unique desktop app found | Pass your actual app path with `setup --app "/absolute/path/to/App.app"` |
 | Missing build tools or a build error | Read the reported error/build log, resolve the prerequisite, and retry; incomplete setup is not active |
 | Installed/enabled but not running | Follow step 4 and inspect `app_compatible` |
-| Launcher says Codex is running | Finish tasks and quit the entire app before using it |
+| Launcher says Codex is running | Finish tasks and quit the entire app. If it still refuses after quitting, update to plugin 0.3.1 or later and enable the runtime again to refresh the launcher; leftover framework crash reporters are ignored, while active workers still block launch |
 | Behavior changes after an app update | Check compatibility; the wrapper may have fallen back to the bundled CLI |
 | Usage fields are `null` or coverage is incomplete | The logs lack those measurements; this is not zero usage |
 | Reporter rejects a file/output path | Use a supported JSONL format and a new output filename; existing files are not overwritten |
