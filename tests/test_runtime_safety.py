@@ -232,6 +232,22 @@ class RuntimeSafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), ["original", "literal"])
 
+    def test_failed_rollback_retains_staging_even_without_previous_installation(self):
+        package, installation = self.package_fixture()
+        replace = Path.replace
+        def fail_promotion_and_rollback(source, target):
+            if Path(target) == self.root / "runtime" or source == self.root / "codex-patched.py":
+                raise OSError("synthetic repeated I/O failure")
+            return replace(source, target)
+        with patch.object(manager, "run", side_effect=self.validate_fixture), patch.object(Path, "replace", fail_promotion_and_rollback):
+            with self.assertRaisesRegex(manager.ManagerError, "recovery needs inspection"):
+                manager.install_package(self.root, package, installation=installation)
+        staging = list(self.root.glob(".staging-*"))
+        self.assertEqual(len(staging), 1)
+        self.assertTrue((staging[0] / "runtime/bin/codex").is_file())
+        self.assertTrue((staging[0] / "receipt.json").is_file())
+        self.assertFalse((self.root / "enabled").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

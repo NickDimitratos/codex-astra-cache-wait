@@ -288,6 +288,10 @@ os.execv(arguments[0], arguments)
     write_text(root / "codex-patched.py", source)
 
 
+class InstallationRecoveryError(ManagerError):
+    """The staging directory must be retained for manual recovery."""
+
+
 def promote_installation(root, staging, names):
     backup = staging / "previous"
     backup.mkdir()
@@ -311,7 +315,7 @@ def promote_installation(root, staging, names):
             for name in reversed(saved):
                 (backup / name).replace(root / name)
         except OSError as rollback_error:
-            raise ManagerError(f"Installation recovery needs inspection; preserved files are in {staging}: {rollback_error}") from error
+            raise InstallationRecoveryError(f"Installation recovery needs inspection; preserved files are in {staging}: {rollback_error}") from error
         raise ManagerError("Installation promotion failed and was rolled back; resolve the write error and retry setup: " + str(error)) from error
 
 
@@ -338,6 +342,7 @@ def install_package(root, package, app=None, origin="local_package", installatio
         raise ManagerError("Package layout, version, or platform is not supported")
     staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=root))
     completed = False
+    preserve_staging = False
     try:
         candidate = staging / "runtime"
         for relative in package_files(spec["tested_target"]):
@@ -374,9 +379,12 @@ def install_package(root, package, app=None, origin="local_package", installatio
         # All validation and writes finish before promotion; runtime is promoted last.
         promote_installation(root, staging, ["validation"] + output_names + ["runtime"])
         completed = True
+    except InstallationRecoveryError:
+        preserve_staging = True
+        raise
     finally:
         backup = staging / "previous"
-        if completed or not backup.exists() or not any(backup.iterdir()):
+        if not preserve_staging and (completed or not backup.exists() or not any(backup.iterdir())):
             shutil.rmtree(staging)
     return {"installed": True, "enabled_for_launcher": False,
             "next_step": ("Enable the launcher, then quit Codex and run launch-patched.command."

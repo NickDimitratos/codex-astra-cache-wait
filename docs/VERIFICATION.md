@@ -50,7 +50,7 @@ The manager's source-build command uses the same pinned upstream assembly path u
 
 Recorded on 2026-09-15 on Apple Silicon macOS with Python 3.9 and 3.11:
 
-- 93 Python tests passed, including regressions for issues #1–#7: retained cumulative lower bounds, unknown comparisons, model/effort distributions, symlink writes, per-launch integrity checks, nested file preservation, and retry after setup failure.
+- 94 Python tests passed, including regressions for issues #1–#7: retained cumulative lower bounds, unknown comparisons, model/effort distributions, symlink writes, per-launch integrity checks, nested file preservation, retry after setup failure, and retention of recovery files after rollback I/O failure.
 - Shell and Python wrappers were executed against disposable CLI fixtures. Changed CLI/helper contents or ownership/receipt data caused fallback; literal arguments and original-version fallback were preserved.
 - Fault injection covered launcher/receipt writes and promotion rollback. Validation subprocesses were replaced only in those fault-injection tests; these fixtures do not validate a compiled runtime.
 - One read-only hash verification of the existing five-file, approximately 350 MiB runtime took 0.19 seconds locally. This is not a portable latency guarantee or a token-saving measurement.
