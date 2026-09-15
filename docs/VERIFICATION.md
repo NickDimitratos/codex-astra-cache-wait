@@ -46,6 +46,19 @@ The manager's source-build command uses the same pinned upstream assembly path u
 - CI now runs the Python checks on Linux, macOS, and Windows with Python 3.9 and 3.13, with a separate exact-source patch check. This checks the toolkit; it does not certify the Rust runtime on those operating systems.
 - The first Windows run exposed automatic line-ending conversion changing checksummed patch bytes. Git attributes now preserve those files byte-for-byte; a simulated CRLF checkout is covered by a regression check.
 
+## Plugin audit fixes (0.3.2)
+
+Recorded on 2026-09-15 on Apple Silicon macOS with Python 3.9 and 3.11:
+
+- 94 Python tests passed, including regressions for issues #1–#7: retained cumulative lower bounds, unknown comparisons, model/effort distributions, symlink writes, per-launch integrity checks, nested file preservation, retry after setup failure, and retention of recovery files after rollback I/O failure.
+- Shell and Python wrappers were executed against disposable CLI fixtures. Changed CLI/helper contents or ownership/receipt data caused fallback; literal arguments and original-version fallback were preserved.
+- Fault injection covered launcher/receipt writes and promotion rollback. Validation subprocesses were replaced only in those fault-injection tests; these fixtures do not validate a compiled runtime.
+- One read-only hash verification of the existing five-file, approximately 350 MiB runtime took 0.19 seconds locally. This is not a portable latency guarantee or a token-saving measurement.
+- OpenAI's plugin and skill validators accepted the updated bundle.
+- Disposable desktop and standalone installations imported the existing validated package, passed the actual local-mock and app-server smoke checks, enabled/refreshed their launchers, returned the expected CLI version, fell back after disable, and removed successfully using real process inspection. No live model requests were made and the active desktop was not restarted.
+
+The Rust patch and release compatibility catalog are unchanged by these fixes. Existing installations need a plugin update followed by `enable` to refresh launchers; toolkit verification does not certify live usage savings.
+
 ## Unproven outcomes
 
 No controlled measurement has established token savings, improved account allowance, live backend compatibility for every reasoning mode, or unchanged task quality across workloads. A previous usage observation happened before activation and cannot establish causality. Full-suite success and runtime compatibility on other operating systems are also unproven.

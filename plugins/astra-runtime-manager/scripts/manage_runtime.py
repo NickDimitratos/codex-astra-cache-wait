@@ -4,7 +4,6 @@
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,18 +17,15 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compatibility
 import runtime_platform
+import runtime_integrity
+from runtime_integrity import OWNER, ManagerError, hash_tree, require_owner, verify_installation
 
 RESOURCES = Path(__file__).resolve().parents[1] / "resources"
 SPEC = json.loads((RESOURCES / "compatibility.json").read_text())
-OWNER = {"owner": "astra-runtime-manager", "schema": 1}
 PACKAGE_FILES = ("codex-package.json", "bin/codex", "bin/codex-code-mode-host",
                  "codex-path/rg", "codex-resources/zsh/bin/zsh")
 DEFAULT_ROOT = Path.home() / ".local/share/codex-astra-cache-wait"
 CRASH_REPORTER_SUFFIX = "/Helpers/browser_crashpad_handler"
-
-
-class ManagerError(Exception):
-    pass
 
 
 def run(arguments, **kwargs):
@@ -44,17 +40,30 @@ def run(arguments, **kwargs):
 
 
 def write_json(path, value):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2) + "\n")
-    temporary.replace(path)
+    write_text(path, json.dumps(value, indent=2) + "\n")
 
 
-def require_owner(root):
-    if root.is_symlink():
-        raise ManagerError("Refusing a symlink as the managed directory")
-    marker = root / "owner.json"
-    if marker.is_symlink() or not marker.is_file() or json.loads(marker.read_text()) != OWNER:
-        raise ManagerError("This directory is not owned by the managed runtime")
+def check_output_paths(root, names):
+    for name in names:
+        path = root / name
+        if path.is_symlink():
+            raise ManagerError(f"Refusing a symlink at managed output: {name}")
+        if path.exists() and not path.is_file():
+            raise ManagerError(f"Unexpected file type at managed output: {name}")
+
+
+def write_text(path, contents, mode=0o600):
+    check_output_paths(path.parent, [path.name])
+    descriptor, name = tempfile.mkstemp(prefix=".write-", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
+            output.write(contents)
+        temporary.chmod(mode)
+        check_output_paths(path.parent, [path.name])
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def claim_root(root):
@@ -79,25 +88,6 @@ def operation_lock(root):
         yield
     finally:
         lock.unlink(missing_ok=True)
-
-
-def hash_tree(root):
-    if root.is_symlink():
-        raise ManagerError("Package root is a symlink")
-    hashes = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            raise ManagerError("Package contains a symlink")
-        if path.is_dir():
-            continue
-        if not path.is_file():
-            raise ManagerError("Package contains an unsupported file type")
-        digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for block in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(block)
-        hashes[path.relative_to(root).as_posix()] = digest.hexdigest()
-    return hashes
 
 
 def running_commands():
@@ -199,17 +189,6 @@ def check_receipt_app(receipt):
         raise ManagerError("Installed runtime target no longer matches this host or release catalog")
 
 
-def verify_installation(root):
-    require_owner(root)
-    receipt_path = root / "receipt.json"
-    if receipt_path.is_symlink() or not receipt_path.is_file():
-        raise ManagerError("No validated installation is recorded")
-    receipt = json.loads(receipt_path.read_text())
-    if hash_tree(root / "runtime") != receipt["files_sha256"]:
-        raise ManagerError("Installed runtime checksum verification failed")
-    return receipt
-
-
 def status(root):
     result = {"installed": False, "enabled_for_launcher": False, "running": False,
               "supported_platform": compatibility.native_target() is not None,
@@ -242,19 +221,17 @@ def status(root):
     return result
 
 
-def create_launchers(root, app, release=None):
+def create_launchers(root, app, release=None, *, runtime_root=None):
+    check_output_paths(root, ["codex-patched", "codex-patched.py", "launch-patched.command"])
     spec = release["spec"] if release else SPEC
-    bundled = shlex.quote(str(app / "Contents/Resources/codex"))
+    runtime_root = runtime_root or root
+    write_portable_launcher(root, {"original_command": [str(app / "Contents/Resources/codex")],
+                            "patched_command": [str(runtime_root / "runtime/bin/codex")],
+                            "cli_version": spec["cli_version"], "features": spec["features"]})
     wrapper = f'''#!/bin/sh
 set -eu
 managed_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-bundled={bundled}
-if [ ! -f "$managed_dir/enabled" ] || [ ! -f "$managed_dir/receipt.json" ] ||
-   [ ! -x "$managed_dir/runtime/bin/codex" ] ||
-   [ "$("$bundled" --version)" != {shlex.quote(spec['cli_version'])} ]; then
-    exec "$bundled" "$@"
-fi
-exec "$managed_dir/runtime/bin/codex" {shlex.join([arg for name in spec['features'] for arg in ('--enable', name)])} "$@"
+exec {shlex.quote(sys.executable)} "$managed_dir/codex-patched.py" "$@"
 '''
     launcher = f'''#!/bin/sh
 set -eu
@@ -272,47 +249,90 @@ exec /usr/bin/open -a {shlex.quote(str(app))} --env "CODEX_CLI_PATH=$managed_dir
 '''
     for name, contents in [("codex-patched", wrapper), ("launch-patched.command", launcher)]:
         path = root / name
-        path.write_text(contents)
-        path.chmod(0o755)
+        write_text(path, contents, 0o755)
 
 
 def write_portable_launcher(root, specification):
     source = '''#!/usr/bin/env python3
 """Launch only this validated runtime; fall back when the original CLI changes."""
-import json
+INTEGRITY_SOURCE
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
 SPEC = json.loads(SPECIFICATION)
-root = Path(__file__).resolve().parent
+root = Path(__file__).absolute().parent
 command = SPEC["original_command"]
-if (root / "enabled").is_file() and (root / "receipt.json").is_file() and Path(SPEC["patched_command"][0]).is_file():
+if (root / "enabled").is_file() or (root / "enabled").is_symlink():
     try:
+        if (root / "enabled").is_symlink():
+            raise ManagerError("Enable marker is a symlink")
+        verify_installation(root)
+        if not os.access(SPEC["patched_command"][0], os.X_OK):
+            raise ManagerError("Patched CLI is not executable")
         with tempfile.TemporaryDirectory(prefix="astra-launch-check-") as temporary:
             env = dict(os.environ, CODEX_HOME=temporary)
             result = subprocess.run(command + ["--version"], capture_output=True, text=True,
                                     encoding="utf-8", errors="replace", env=env, timeout=15)
         if result.returncode == 0 and (result.stdout or result.stderr).strip() == SPEC["cli_version"]:
             command = SPEC["patched_command"] + [arg for feature in SPEC["features"] for arg in ("--enable", feature)]
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (ManagerError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        print("Astra runtime verification failed; using the original CLI: " + str(error), file=sys.stderr)
 arguments = command + sys.argv[1:]
 if os.name == "nt":
     raise SystemExit(subprocess.call(arguments))
 os.execv(arguments[0], arguments)
-'''.replace('SPECIFICATION', repr(json.dumps(specification)))
-    (root / "codex-patched.py").write_text(source, encoding="utf-8")
+'''.replace('SPECIFICATION', repr(json.dumps(specification))).replace(
+    'INTEGRITY_SOURCE', Path(runtime_integrity.__file__).read_text(encoding="utf-8"))
+    write_text(root / "codex-patched.py", source)
+
+
+class InstallationRecoveryError(ManagerError):
+    """The staging directory must be retained for manual recovery."""
+
+
+def promote_installation(root, staging, names):
+    backup = staging / "previous"
+    backup.mkdir()
+    saved, promoted = [], []
+    try:
+        for name in names:
+            destination = root / name
+            if destination.exists() or destination.is_symlink():
+                if name == "validation":
+                    check_validation_files(root)
+                else:
+                    check_output_paths(root, [name])
+                destination.replace(backup / name)
+                saved.append(name)
+            (staging / name).replace(destination)
+            promoted.append(name)
+    except (OSError, ManagerError) as error:
+        try:
+            for name in reversed(promoted):
+                (root / name).replace(staging / name)
+            for name in reversed(saved):
+                (backup / name).replace(root / name)
+        except OSError as rollback_error:
+            raise InstallationRecoveryError(f"Installation recovery needs inspection; preserved files are in {staging}: {rollback_error}") from error
+        raise ManagerError("Installation promotion failed and was rolled back; resolve the write error and retry setup: " + str(error)) from error
 
 
 def install_package(root, package, app=None, origin="local_package", installation=None):
     installation = installation or resolve_installation(app)
     release = installation["release"]
     spec = release["spec"]
-    if (root / "runtime").exists():
+    require_owner(root)
+    if (root / "runtime").exists() or (root / "runtime").is_symlink():
         raise ManagerError("A runtime is already present; inspect status or remove it before replacing it")
+    output_names = ["codex-patched.py", "receipt.json"]
+    if installation["app"]:
+        output_names += ["codex-patched", "launch-patched.command"]
+    check_output_paths(root, output_names + ["enabled"])
+    if (root / "enabled").exists() or (root / "receipt.json").exists():
+        raise ManagerError("Existing installation metadata needs inspection before a fresh install")
+    check_validation_files(root)
     hash_tree(package)  # Reject symlinks before copying or executing anything.
     metadata = json.loads((package / "codex-package.json").read_text())
     entrypoint = "bin/codex.exe" if "windows" in spec["tested_target"] else "bin/codex"
@@ -320,8 +340,11 @@ def install_package(root, package, app=None, origin="local_package", installatio
             or metadata.get("variant") != "codex" or metadata.get("layoutVersion") != 1
             or metadata.get("version") != release["package_version"]):
         raise ManagerError("Package layout, version, or platform is not supported")
-    with tempfile.TemporaryDirectory(prefix=".staging-", dir=root) as temporary:
-        candidate = Path(temporary) / "runtime"
+    staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=root))
+    completed = False
+    preserve_staging = False
+    try:
+        candidate = staging / "runtime"
         for relative in package_files(spec["tested_target"]):
             source = package / relative
             if not source.is_file():
@@ -329,7 +352,7 @@ def install_package(root, package, app=None, origin="local_package", installatio
             destination = candidate / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
-        validation = root / "validation"
+        validation = staging / "validation"
         validation.mkdir(exist_ok=True)
         for name in ("package_smoke.py", "app_server_smoke.py"):
             print(f"Validating: {name}", flush=True)
@@ -340,19 +363,29 @@ def install_package(root, package, app=None, origin="local_package", installatio
             if checks[name].get("passed") is not True:
                 raise ManagerError("A package validation check did not pass")
         hashes = hash_tree(candidate)
-        candidate.rename(root / "runtime")
-    if installation["app"]:
-        create_launchers(root, Path(installation["app"]), release)
-    write_portable_launcher(root, {"original_command": [installation["cli"]],
+        if installation["app"]:
+            create_launchers(staging, Path(installation["app"]), release, runtime_root=root)
+        else:
+            write_portable_launcher(staging, {"original_command": [installation["cli"]],
                             "patched_command": [str(root / "runtime" / entrypoint)],
                             "cli_version": spec["cli_version"], "features": spec["features"]})
-    write_json(root / "receipt.json", {"app": installation["app"], "cli": installation["cli"], "origin": origin,
+        write_json(staging / "receipt.json", {"app": installation["app"], "cli": installation["cli"], "origin": origin,
                "target": spec["tested_target"], "validation_scope": "local_package_and_protocol_checks",
                "cli_version": spec["cli_version"], "release_id": release["id"],
                "source_commit": spec["commit"] if origin == "source_build" else None,
                "patch_sha256": spec["patch_sha256"] if origin == "source_build" else None,
                "files_sha256": hashes, "checks": checks,
                "validated_at": datetime.now(timezone.utc).isoformat()})
+        # All validation and writes finish before promotion; runtime is promoted last.
+        promote_installation(root, staging, ["validation"] + output_names + ["runtime"])
+        completed = True
+    except InstallationRecoveryError:
+        preserve_staging = True
+        raise
+    finally:
+        backup = staging / "previous"
+        if not preserve_staging and (completed or not backup.exists() or not any(backup.iterdir())):
+            shutil.rmtree(staging)
     return {"installed": True, "enabled_for_launcher": False,
             "next_step": ("Enable the launcher, then quit Codex and run launch-patched.command."
                           if installation["app"] else "Enable the launcher, then run Python with codex-patched.py and your CLI arguments.")}
@@ -404,11 +437,22 @@ def build_and_install(root, app=None, installation=None):
 def enable(root):
     receipt = verify_installation(root)
     check_receipt_app(receipt)
+    check_output_paths(root, ["enabled", "codex-patched", "codex-patched.py", "launch-patched.command"])
     if receipt.get("app"):
         release = compatibility.select_release(receipt.get("cli_version", SPEC["cli_version"]),
                                                experimental=True, target=receipt.get("target"))
         create_launchers(root, Path(receipt["app"]), release)
-    (root / "enabled").write_text("enabled for explicit launcher\n")
+    else:
+        release = compatibility.select_release(receipt.get("cli_version", SPEC["cli_version"]),
+                                               experimental=True, target=receipt.get("target"))
+        if release is None:
+            raise ManagerError("No compatible release for refreshing the standalone launcher")
+        entrypoint = "codex.exe" if "windows" in receipt.get("target", "") else "codex"
+        write_portable_launcher(root, {"original_command": [receipt["cli"]],
+                               "patched_command": [str(root / "runtime/bin" / entrypoint)],
+                               "cli_version": receipt.get("cli_version", SPEC["cli_version"]),
+                               "features": release["spec"]["features"]})
+    write_text(root / "enabled", "enabled for explicit launcher\n")
     return {"enabled_for_launcher": True, "restart_required": True,
             "launcher": str(root / ("launch-patched.command" if receipt.get("app") else "codex-patched.py")),
             "integration": "desktop" if receipt.get("app") else "standalone_cli"}
@@ -435,6 +479,19 @@ def launch(root):
     return {"launch_requested": True, "note": "Check status after startup to confirm the actual runtime."}
 
 
+VALIDATION_FILES = {"package-smoke.json", "package-smoke.stdout.log", "package-smoke.stderr.log",
+                    "app-server-smoke.json", "app-server-smoke.stderr.log"}
+
+
+def check_validation_files(root):
+    validation = root / "validation"
+    if validation.is_symlink() or (validation.exists() and not validation.is_dir()):
+        raise ManagerError("Unexpected validation path; inspect and preserve it before continuing")
+    if validation.exists() and any(path.name not in VALIDATION_FILES or path.is_symlink() or
+                                   not path.is_file() for path in validation.iterdir()):
+        raise ManagerError("Unexpected files exist in validation; inspect and preserve them before continuing")
+
+
 def remove(root):
     if not root.exists():
         return {"removed": False, "note": "No managed runtime exists."}
@@ -445,6 +502,8 @@ def remove(root):
                "codex-patched", "codex-patched.py", "launch-patched.command", ".operation-lock"}
     if any(path.name not in allowed or path.is_symlink() for path in root.iterdir()):
         raise ManagerError("Unexpected files exist in the managed directory; inspect and preserve them before removal")
+    check_output_paths(root, allowed - {"runtime", "validation"})
+    check_validation_files(root)
     if (root / "runtime").exists() and (root / "receipt.json").is_file():
         receipt = json.loads((root / "receipt.json").read_text())
         if set(hash_tree(root / "runtime")) - set(receipt["files_sha256"]):

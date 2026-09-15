@@ -141,6 +141,67 @@ class UsageTests(unittest.TestCase):
         result = usage.compare(before, after)
         self.assertEqual(result["observed_changes"]["fresh_input_tokens_reported"]["relative_change_percent"], -70)
 
+    def test_failed_resume_preserves_known_usage_and_marks_lower_bound(self):
+        result = self.report([{"type":"thread.started", "thread_id":"a"}, self.turn(),
+                              {"type":"thread.started", "thread_id":"a"},
+                              {"type":"turn.failed"}])
+        self.assertEqual(result["totals"]["input_tokens_reported"], 1000)
+        self.assertEqual(result["totals"]["output_tokens_reported"], 100)
+        self.assertEqual(result["totals"]["failed_samples"], 1)
+        self.assertEqual(result["totals"]["samples_with_partial_usage"], 1)
+        compared = usage.compare(self.report([self.turn()]), result)
+        self.assertIsNone(compared["observed_changes"]["input_tokens_reported"]["difference"])
+
+    def test_success_after_failure_replaces_lower_bound_without_double_counting(self):
+        result = self.report([self.turn(), {"type":"turn.started"}, {"type":"turn.failed"},
+                              {"type":"turn.started"}, self.turn(input=1500)])
+        self.assertEqual(result["totals"]["input_tokens_reported"], 1500)
+        self.assertEqual(result["totals"]["samples_with_partial_usage"], 0)
+        self.assertEqual(result["totals"]["failed_samples"], 1)
+
+    def test_failure_does_not_reset_native_monotonicity_check(self):
+        with self.assertRaisesRegex(ValueError, "decreased"):
+            self.report([self.turn(), {"type":"turn.started"}, {"type":"turn.failed"},
+                         {"type":"turn.started"}, self.turn(input=900)])
+
+    def test_missing_measurements_produce_unknown_token_deltas(self):
+        for format_name in ("codex-exec", "opencodex"):
+            measured = self.report([self.turn()] if format_name == "codex-exec" else [self.request()], format_name)
+            missing = self.report([{"type":"turn.failed"}] if format_name == "codex-exec" else
+                                  [self.request(usage=None, usageStatus="unreported", status=502)], format_name)
+            for before, after in ((measured, missing), (missing, measured), (missing, missing)):
+                with self.subTest(format=format_name, before=before["totals"]["samples_with_usage"], after=after["totals"]["samples_with_usage"]):
+                    changes = usage.compare(before, after)["observed_changes"]
+                    for key in ("input_tokens_reported", "output_tokens_reported", "fresh_input_tokens_reported"):
+                        self.assertIsNone(changes[key]["difference"])
+                        self.assertIsNone(changes[key]["relative_change_percent"])
+
+    def test_measured_zero_remains_a_known_difference(self):
+        before = self.report([self.turn()])
+        after = self.report([self.turn(input=0, cached=0, output=0, reasoning=0)])
+        change = usage.compare(before, after)["observed_changes"]["input_tokens_reported"]
+        self.assertEqual(change["difference"], -1000)
+        self.assertEqual(change["relative_change_percent"], -100)
+
+    def test_model_distribution_warning_handles_proportions_and_membership(self):
+        def reports(models):
+            return self.report([self.request(str(i), requestedModel=model, requestedEffort="medium")
+                                for i, model in enumerate(models)], "opencodex")
+        astra, sol = "gpt-6-astra", "gpt-5.6-sol"
+        cases = [([astra]*9+[sol], [astra]+[sol]*9, True),
+                 ([astra, sol], [astra, sol]*2, False), ([astra], [sol], True)]
+        for before, after, expected in cases:
+            with self.subTest(before=before, after=after):
+                notes = usage.compare(reports(before), reports(after))["notes"]
+                self.assertEqual(any("sample mix differs" in note for note in notes), expected)
+
+    def test_effort_distribution_warning_handles_equal_size_changed_mix(self):
+        def reports(efforts):
+            return self.report([self.request(str(i), requestedEffort=effort)
+                                for i, effort in enumerate(efforts)], "opencodex")
+        notes = usage.compare(reports(["low"]*9+["high"]), reports(["low"]+["high"]*9))["notes"]
+        self.assertTrue(any("sample mix differs" in note for note in notes))
+
 
 if __name__ == "__main__":
     unittest.main()
